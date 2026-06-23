@@ -1,0 +1,289 @@
+<script setup lang="ts">
+import { NumberingFormat } from '@/models/numbering-format/numbering-format'
+import { NumberingGroup } from '@/models/numbering-group/numbering-group'
+
+const searchQuery = ref('')
+const newGroupData = ref({
+  name: '',
+  description: ''
+})
+
+const groupFormats = ref<NumberingGroup[]>([])
+
+const isSuccessCreateGroupFormat = ref(false)
+const isCreateGroupFormatDialogVisible = ref(false)
+const isCreateFormatDialogVisible = ref(false)
+const numberingFormats = ref<NumberingFormat[]>([])
+const refGroupForm = ref()
+const isFormReady = computed(() => !!newGroupData.value.name.trim())
+const isRefetchList = ref(false)
+const formRules = {
+  required: (value: string) => !!value || 'Required.',
+};
+
+const fetchNumberingGroups = async() => {
+    try {
+          const res = await useApi('/numbering/group', {
+            method: 'GET'
+          })
+      
+          const value = res.data.value as { data: any };
+          groupFormats.value = value.data.map((numberingGroup: any) => mapNumberingGroup(numberingGroup));
+          console.log(groupFormats.value)
+        } catch (e) {
+          console.log(e)
+        }
+}
+
+const fetchNumberingFormats = async () => {
+        try {
+          const res = await useApi('/numbering/format', {
+            method: 'GET'
+          })
+      
+          console.log(res.data.value)
+          const value = res.data.value as { data: any };
+          numberingFormats.value = value.data.map((numberingFormat: any) => mapNumberingFormat(numberingFormat));
+          console.log(numberingFormats.value)
+        } catch (e) {
+          console.log(e)
+        }
+      }
+
+      const mapNumberingFormat = (rawNumberingFormats: any): NumberingFormat => {
+        return {
+          ...rawNumberingFormats,
+        };
+      };
+
+      const mapNumberingGroup = (rawNumberingGroup: any): NumberingGroup => {
+        return {
+          ...rawNumberingGroup,
+        };
+      };
+
+      onMounted(() => {
+        fetchNumberingFormats()
+        fetchNumberingGroups()
+      })
+
+      const refetchList = async () => {
+        if (isRefetchList) {
+          fetchNumberingFormats()
+          fetchNumberingGroups()
+        }
+      }
+
+const submitNewGroupForm = async () => {
+  const { valid: isValid } = await refGroupForm.value?.validate()
+  if (!isValid) return
+
+  try {
+    const { data, error } = await useApi('/numbering/group',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: newGroupData.value.name,
+          description: newGroupData.value.description,
+        }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      }
+    )
+
+    if (error.value) {
+      console.error('API Error:', error.value)
+      isSuccessCreateGroupFormat.value = false
+      return
+    }
+
+    if (data.value && (data.value as any).success) {
+      isSuccessCreateGroupFormat.value = true
+      setTimeout(() => {
+        isSuccessCreateGroupFormat.value = false
+        isCreateGroupFormatDialogVisible.value = false
+        fetchNumberingFormats()
+        fetchNumberingGroups()
+      }, 1000)
+    }
+  } catch (e) {
+    isSuccessCreateGroupFormat.value = false
+    console.error('Unexpected error:', e)
+  }
+}
+
+const { t } = useI18n()
+
+const headers = computed(() => [
+  { title: t('documentNumbers.columns.name'), key: 'name' },
+  { title: t('documentNumbers.columns.format'), key: 'format' },
+  { title: t('documentNumbers.columns.incrementedByGroup'), key: 'incrementedByGroup' },
+  { title: t('documentNumbers.columns.separator'), key: 'separator' },
+  { title: t('documentNumbers.columns.createdAt'), key: 'createdAt' },
+])
+
+const groupBy = [{ key: 'group' }]
+
+const incrementedStateColor = (status: boolean) => {
+  if (status == true) {
+    return { color: 'success', text: t('documentNumbers.columns.yes') }
+  } else {
+    return { color: 'error', text: t('documentNumbers.columns.no') }
+  }
+}
+
+const getIcon = (props: Record<string, unknown>) => props.icon as any
+</script>
+
+<template>
+    <div>
+        <VCard>
+      <VCardText>
+        <div class="d-flex justify-end flex-wrap gap-y-4 gap-x-6">
+          <div class="d-flex align-center flex-wrap">
+            <AppTextField
+              v-model="searchQuery"
+              :placeholder="t('documentNumbers.search')"
+              style="inline-size: 200px; width: 500px;"
+              class="me-3"
+            />
+          </div>
+ 
+          <VSpacer />
+          <div class="d-flex align-center flex-wrap gap-4">
+            <VBtn prepend-icon="tabler-affiliate" @click="isCreateGroupFormatDialogVisible = true">
+              {{ t('documentNumbers.createGroup') }}
+            </VBtn>
+
+            <VBtn prepend-icon="tabler-code-asterisk" @click="isCreateFormatDialogVisible = true">
+              {{ t('documentNumbers.addFormat') }}
+            </VBtn>
+          </div>
+        </div>
+      </VCardText>
+
+      <VDivider />
+
+      <VDataTable
+        :headers="headers"
+        :items="numberingFormats"
+        :items-per-page="10"
+        :group-by="groupBy"
+      >
+    <!-- full name -->
+    <template #item.name="{ item }">
+      <span class="d-block font-weight-medium text-high-emphasis text-truncate">{{ item.name }}</span>
+    </template>
+    
+    <template #item.incrementedByGroup="{ item }">
+      <VChip
+        v-if="item.id != null"
+        :color="incrementedStateColor(item.incrementedByGroup).color"
+        class="font-weight-medium"
+      >
+        {{ incrementedStateColor(item.incrementedByGroup).text }}
+      </VChip>
+    </template>
+
+    <template #item.createdAt="{ item }">
+      <span v-if="item.createdAt">
+        {{ new Date(item.createdAt).toLocaleString() }}
+      </span>
+    </template>
+    
+    <!-- <template #item.group="{ item }">
+      {{ item.group }}
+    </template> -->
+
+    <template #data-table-group="{ props, item, count }">
+      <td>
+        <VBtn
+          v-bind="props"
+          variant="text"
+          density="comfortable"
+        >
+          <VIcon
+            class="flip-in-rtl"
+            :icon="getIcon(props)"
+          />
+        </VBtn>
+
+        <span>{{ item.value }}</span>
+        <span v-if="item.items[0].key != null">({{ count }})</span>
+        <span v-else>(0)</span>
+      </td>
+    </template>
+  </VDataTable>
+    </VCard>
+    </div>
+
+    <CreatePublicationFormatDialog
+      v-model:group-format="groupFormats"
+      v-model:is-dialog-visible="isCreateFormatDialogVisible"
+      v-model:is-refetch-list="isRefetchList"
+      @update:is-refetch-list="refetchList"
+    />
+
+    <VDialog
+      v-model="isCreateGroupFormatDialogVisible"
+      persistent
+      :width="$vuetify.display.smAndDown ? 'auto' : 560"
+    >
+      <VCard class="bm-dialog">
+        <div class="bmd-head">
+          <div class="bmd-mark">
+            <VIcon icon="tabler-affiliate" size="22" />
+          </div>
+          <div class="bmd-titles">
+            <h2>{{ t('documentNumbers.createGroupDialog.title') }}</h2>
+            <p>{{ t('documentNumbers.createGroupDialog.subtitle') }}</p>
+          </div>
+          <button class="bmd-close" type="button" @click="isCreateGroupFormatDialogVisible = false">
+            <VIcon icon="tabler-x" size="18" />
+          </button>
+        </div>
+
+        <VForm ref="refGroupForm">
+          <div class="bmd-body">
+            <VAlert
+              v-if="isSuccessCreateGroupFormat"
+              density="compact"
+              color="success"
+              variant="tonal"
+              class="mb-4"
+            >
+              {{ t('documentNumbers.createGroupDialog.groupName') }} '{{ newGroupData.name }}' berhasil dibuat.
+            </VAlert>
+            <VRow>
+              <VCol cols="12">
+                <AppTextField
+                  v-model="newGroupData.name"
+                  :label="t('documentNumbers.createGroupDialog.groupName')"
+                  :rules="[formRules.required]"
+                />
+              </VCol>
+              <VCol cols="12">
+                <AppTextarea
+                  v-model="newGroupData.description"
+                  :label="t('documentNumbers.createGroupDialog.description')"
+                  rows="3"
+                  :placeholder="t('documentNumbers.createGroupDialog.descPh')"
+                />
+              </VCol>
+            </VRow>
+          </div>
+          <div class="bmd-foot">
+            <button class="bmd-btn bmd-btn-ghost" type="button" @click="isCreateGroupFormatDialogVisible = false">
+              {{ t('common.cancel') }}
+            </button>
+            <button class="bmd-btn bmd-btn-primary" type="button" :disabled="!isFormReady" @click="submitNewGroupForm">
+              {{ t('documentNumbers.createGroupDialog.create') }}
+            </button>
+          </div>
+        </VForm>
+      </VCard>
+    </VDialog>
+  </template>
+  
