@@ -7,6 +7,7 @@ import { useApi } from '@/composables/useApi';
 // @ts-ignore
 import html2pdf from 'html2pdf.js';
 import QRCode from 'qrcode';
+import DOMPurify from 'dompurify';
 
 interface Props {
   document: Document;
@@ -523,9 +524,12 @@ const generateDocumentPDF = async () => {
     // Generate HTML content (with base64 signatures)
     const htmlContent = await generateDocumentHTMLTemplate()
     
-    // Create a temporary wrapper div
+    // Create a temporary wrapper div. htmlContent embeds user-authored document
+    // body, so sanitize before it touches the DOM (this wrapper is appended to
+    // document.body below, so an unsanitized <img onerror> would execute) —
+    // mirrors the DOMPurify guard in reguler/preview.vue.
     const wrapper = window.document.createElement('div')
-    wrapper.innerHTML = htmlContent
+    wrapper.innerHTML = DOMPurify.sanitize(htmlContent)
     wrapper.style.position = 'absolute'
     wrapper.style.left = '-9999px'
     wrapper.style.top = '0'

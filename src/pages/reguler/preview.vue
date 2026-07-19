@@ -186,6 +186,7 @@
 </template>
 
 <script setup>
+import DOMPurify from 'dompurify'
 import html2pdf from 'html2pdf.js'
 import { computed, ref } from 'vue'
 
@@ -358,11 +359,11 @@ const generateHTMLTemplate = () => {
 // Methods
 const previewHTML = () => {
   const htmlTemplate = generateHTMLTemplate()
-  generatedHTML.value = `
+  generatedHTML.value = DOMPurify.sanitize(`
     <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
       ${htmlTemplate}
     </div>
-  `
+  `)
   showHTMLPreview.value = true
   console.log('HTML Preview generated')
 }
@@ -382,7 +383,7 @@ const generatePDF = async () => {
     
     // Create a temporary wrapper div
     const wrapper = document.createElement('div')
-    wrapper.innerHTML = htmlContent
+    wrapper.innerHTML = DOMPurify.sanitize(htmlContent)
     wrapper.style.position = 'absolute'
     wrapper.style.left = '-9999px'
     wrapper.style.top = '0'

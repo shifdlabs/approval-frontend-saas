@@ -141,6 +141,14 @@ const onTapFilter = () => {
   isFilterSectionVisible.value = !isFilterSectionVisible.value;
 };
 
+function onTapRow(
+  e: MouseEvent,
+  payload: { item: { id: string }; index: number; event: MouseEvent }
+): void {
+  const { item } = payload
+  window.location.href = `/preview/${item.id}`
+}
+
 // Helper function to strip HTML tags and decode entities for plain text display
 const stripHtml = (html: string): string => {
   if (!html) return ''
@@ -286,6 +294,7 @@ onMounted(async () => {
             ]"
             :items="filteredInbox"
             :items-per-page="10"
+            @click:row="onTapRow"
           >
             <template #item.subject="{ item }">
               <VLabel>
@@ -307,7 +316,7 @@ onMounted(async () => {
             </template>
             <template #item.star="{ item }">
               <VIcon
-                @click="toggleStar(item.id)"
+                @click.stop="toggleStar(item.id)"
                 class="cursor-pointer"
                 :color="starredMessages.includes(item.id) ? 'yellow' : 'gray'"
               >

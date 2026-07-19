@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { Position } from '@/models/positions/position';
 import { User } from '@/models/users/users';
 import { ref, watch } from 'vue';
 import { VForm } from 'vuetify/components';
 
 interface Props {
   userList: User[];
-  position: Position[];
   isDialogVisible: boolean;
   isRefetchList: boolean;
 }
@@ -21,15 +19,10 @@ const emit = defineEmits<Emit>();
 const props = defineProps<Props>();
 
 const initialFormData = {
-  firstName: '',
-  lastName: '',
+  name: '',
   email: '',
-  phoneNumber: '',
   password: '',
   confirmPassword: '',
-  role: 1,
-  access: true,
-  positionId: '',
 };
 
 const formData = ref({ ...initialFormData });
@@ -40,7 +33,7 @@ watch(
     if (isVisible) {
       formData.value = { ...initialFormData };
       isAllInputtedValid.value = true;
-      console.log('Dialog opened, resetting formData');
+      errorMessage.value = '';
     }
   }
 );
@@ -48,52 +41,69 @@ watch(
 const isPasswordVisible = ref(false);
 const isConfirmPasswordVisible = ref(false);
 const refVForm = ref<VForm>();
-const isErrorUniqueEmail = ref(false);
 const isAllInputtedValid = ref(true);
+const errorMessage = ref('');
+const isSuccessSnackbarVisible = ref(false);
+const successMessage = ref('');
 
+// Approval no longer creates user accounts directly — SIS owns identity
+// (Phase 2). Adding a member is two SIS calls: register the global account,
+// then attach it to this org. The local Approval `users` row is created
+// automatically on that person's first login (see
+// config/middleware/jwks_middleware.go ensureUserProvisioned) — there is
+// nothing left for Approval's own API to do here.
 const createNewUser = async () => {
+  errorMessage.value = ''
+
+  // Step 1 — register the global SIS identity.
   try {
-    const firstName = formData.value.firstName
-    const lastName = formData.value.lastName
-    const email = formData.value.email
-    const phone = formData.value.phoneNumber
-    const password = formData.value.password
-    const role = formData.value.role
-    const access = formData.value.access
-    const positionID = formData.value.positionId
-
-    const { data } = await useApi('/user', {
+    await sisApi('/api/auth/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        firstName,
-        lastName,
-        email,
-        phone,
-        password,
-        role,
-        access,
-        positionID,
-      }),
-    }).json<{ success: boolean }>()
-
-    if (data.value?.success) {
-      emit('update:isDialogVisible', false)
-      emit('update:isRefetchList', true)
-    } else {
-      isAllInputtedValid.value = false
-    }
+      body: {
+        name: formData.value.name,
+        email: formData.value.email,
+        password: formData.value.password,
+      },
+    })
   } catch (e) {
-    console.log(e)
-    isAllInputtedValid.value = false
+    const sisErr = parseSisError(e)
+    if (sisErr.code === 'EMAIL_ALREADY_EXISTS') {
+      errorMessage.value = 'Email ini sudah terdaftar di SIS. Gunakan fitur Invite Member untuk menambahkan mereka ke organisasi ini.'
+    } else {
+      errorMessage.value = sisErr.message
+    }
+    return // do not proceed to Step 2
   }
+
+  // Step 2 — add the newly-registered identity as a member of this org.
+  const orgId = getCurrentOrgId()
+  try {
+    await sisApi(`/api/orgs/${orgId}/members`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${useCookie('accessToken').value}`,
+      },
+      body: {
+        email: formData.value.email,
+        role: 'member',
+      },
+    })
+  } catch (e) {
+    errorMessage.value = parseSisError(e).message
+    return
+  }
+
+  successMessage.value = `User ${formData.value.name} berhasil ditambahkan. Mereka dapat login menggunakan email dan password yang telah dibuat.`
+  isSuccessSnackbarVisible.value = true
+  emit('update:isDialogVisible', false)
+  emit('update:isRefetchList', true)
 }
 
 const onFormSubmit = async () => {
   refVForm.value?.validate().then(({ valid: isValid }) => {
     if (isValid) {
-      isErrorUniqueEmail.value = false;
       isAllInputtedValid.value = true;
+      errorMessage.value = '';
       createNewUser();
     } else {
       isAllInputtedValid.value = false;
@@ -134,57 +144,29 @@ const { t } = useI18n()
 
       <VForm ref="refVForm" @submit.prevent="onFormSubmit">
         <div class="bmd-body">
-          <VAlert v-if="isErrorUniqueEmail" color="error" class="mb-2">
-            {{ t('common.emailAlreadyRegistered') }}
-          </VAlert>
           <VAlert v-if="!isAllInputtedValid" color="error" class="mb-2">
             {{ t('common.errorFormInput') }}
           </VAlert>
+          <VAlert v-if="errorMessage" color="error" class="mb-2">
+            {{ errorMessage }}
+          </VAlert>
 
           <VRow>
-            <VCol cols="12" md="6">
+            <VCol cols="12">
               <AppTextField
-                v-model="formData.firstName"
-                :label="t('common.firstName')"
-                :placeholder="t('common.firstNamePh')"
+                v-model="formData.name"
+                :label="t('common.name')"
+                :placeholder="t('common.namePh')"
                 :rules="[requiredValidator, maxLengthValidator(100)]"
               />
             </VCol>
-            <VCol cols="12" md="6">
-              <AppTextField
-                v-model="formData.lastName"
-                :label="t('common.lastName')"
-                :placeholder="t('common.lastNamePh')"
-                :rules="[requiredValidator, maxLengthValidator(100)]"
-              />
-            </VCol>
-            <VCol cols="12" md="6">
+            <VCol cols="12">
               <AppTextField
                 v-model="formData.email"
                 :label="t('common.email')"
                 type="email"
                 :placeholder="t('common.emailPh')"
                 :rules="[requiredValidator, emailValidator]"
-              />
-            </VCol>
-            <VCol cols="12" md="6">
-              <AppTextField
-                v-model="formData.phoneNumber"
-                :label="t('common.phone')"
-                type="tel"
-                :placeholder="t('common.phonePh')"
-                :rules="[requiredValidator, phoneValidator]"
-              />
-            </VCol>
-            <VCol cols="12">
-              <AppSelect
-                v-model="formData.positionId"
-                :label="t('common.jobPosition')"
-                :placeholder="t('common.jobPositionPh')"
-                :items="props.position"
-                item-title="name"
-                item-value="id"
-                :rules="[requiredValidator]"
               />
             </VCol>
             <VCol cols="12" md="6">
@@ -211,24 +193,6 @@ const { t } = useI18n()
                 @click:append-inner="isConfirmPasswordVisible = !isConfirmPasswordVisible"
               />
             </VCol>
-            <VCol cols="12" md="6">
-              <div class="app-text-field flex-grow-1">
-                <VLabel class="mb-1 text-body-2 text-wrap" style="line-height: 15px;" :text="t('common.role')" />
-                <VRadioGroup v-model="formData.role" inline>
-                  <VRadio label="Reguler" :value="1" />
-                  <VRadio label="Admin" :value="99" />
-                </VRadioGroup>
-              </div>
-            </VCol>
-            <VCol cols="12" md="6">
-              <div class="app-text-field flex-grow-1">
-                <VLabel class="mb-1 text-body-2 text-wrap" style="line-height: 15px;" :text="t('common.access')" />
-                <VRadioGroup v-model="formData.access" inline>
-                  <VRadio :label="t('common.active')" :value="true" />
-                  <VRadio :label="t('common.disabled')" :value="false" />
-                </VRadioGroup>
-              </div>
-            </VCol>
           </VRow>
         </div>
 
@@ -243,4 +207,18 @@ const { t } = useI18n()
       </VForm>
     </VCard>
   </VDialog>
+
+  <VSnackbar
+    v-model="isSuccessSnackbarVisible"
+    multi-line
+    :timeout="4000"
+  >
+    {{ successMessage }}
+
+    <template #actions>
+      <VBtn color="success" @click="isSuccessSnackbarVisible = false">
+        {{ t('common.close') }}
+      </VBtn>
+    </template>
+  </VSnackbar>
 </template>

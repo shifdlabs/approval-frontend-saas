@@ -272,7 +272,6 @@ const handleImportComplete = async () => {
   <!-- 👉 Edit user info dialog -->
   <CreateUserDialog
     v-model:user-list="usersList"
-    v-model:position="positions"
     v-model:is-dialog-visible="isCreateUserDialogVisible"
     v-model:is-refetch-list="isRefetchList"
     @update:is-refetch-list="refetchList"

@@ -51,6 +51,8 @@ const id = {
     pleaseWait: 'Harap tunggu',
     errorFormInput: 'Harap ikuti aturan form input.',
     emailAlreadyRegistered: 'Email yang dimasukkan sudah terdaftar.',
+    name: 'Nama',
+    namePh: 'Masukkan nama lengkap',
     firstName: 'Nama Depan',
     firstNamePh: 'Masukkan nama depan Anda',
     lastName: 'Nama Belakang',
@@ -113,7 +115,9 @@ const id = {
     loginTitle: 'Selamat Datang di Shifd',
     loginSubtitle: 'Silakan masuk ke akun Anda',
     email: 'Email',
-    emailPh: 'johndoe@email.com',
+    // '@' is a vue-i18n special char (linked-message syntax) and must be
+    // escaped via literal interpolation, or t() throws a compile error.
+    emailPh: "johndoe{'@'}email.com",
     password: 'Kata Sandi',
     loginBtn: 'Masuk',
     loggingIn: 'Sedang masuk...',

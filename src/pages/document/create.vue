@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import DOMPurify from 'dompurify'
 import A4PaperView from "@/components/A4PaperView.vue";
 import TiptapEditor from '@/@core/components/TiptapEditor.vue'
 import { BookedDocumentNumber } from '@/models/document-number/document-number';
@@ -68,6 +69,10 @@ const templates = ref<LetterTemplate[]>([])
 const selectedTemplateId = ref<string | null>(null)
 const isTemplatePreviewOpen = ref(false)
 const previewingTemplate = ref<LetterTemplate | null>(null)
+const TEMPLATE_PREVIEW_FALLBACK = '<p>Sehubungan dengan keperluan yang ada, bersama surat ini kami sampaikan bahwa <strong>Lorem Ipsum</strong> adalah contoh teks yang digunakan dalam industri percetakan dan penataan huruf.</p>'
+const sanitizedTemplatePreview = computed(() =>
+  DOMPurify.sanitize(previewingTemplate.value?.body || TEMPLATE_PREVIEW_FALLBACK)
+)
 
 const fetchTemplates = async () => {
   try {
@@ -1129,7 +1134,7 @@ const onFileRemoved = (index: number) => {
           <div class="tpl-preview-divider" />
           <div
             class="tpl-preview-body"
-            v-html="previewingTemplate?.body || '<p>Sehubungan dengan keperluan yang ada, bersama surat ini kami sampaikan bahwa <strong>Lorem Ipsum</strong> adalah contoh teks yang digunakan dalam industri percetakan dan penataan huruf.</p><p>Adapun hal-hal yang perlu diperhatikan adalah sebagai berikut:</p><ul><li>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</li><li>Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</li><li>Ut enim ad minim veniam, quis nostrud exercitation.</li></ul><p>Demikian surat ini kami sampaikan, atas perhatian dan kerja samanya kami ucapkan terima kasih.</p>'"
+            v-html="sanitizedTemplatePreview"
           />
           <div class="tpl-preview-closing">
             <p>Hormat kami,</p>

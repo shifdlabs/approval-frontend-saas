@@ -132,6 +132,24 @@ function handleAuthErrorCode(errorCode?: string) {
     window.location.href = '/access-restricted?reason=org_missing'
 }
 
+// Reads the org_id claim straight off the cached SIS access token, for call
+// sites that need "the org the logged-in user is currently in" without a
+// server round-trip (e.g. SIS's org-membership endpoints, which take org_id
+// in the URL path rather than inferring it server-side).
+export function getCurrentOrgId(): string | null {
+  const token = useCookie('accessToken').value
+  if (!token) return null
+
+  try {
+    const payloadBase64 = token.split('.')[1]
+    const payload = JSON.parse(atob(payloadBase64))
+    return payload.org_id ?? null
+  } catch (error) {
+    console.error('Invalid token or decode error:', error)
+    return null
+  }
+}
+
 function isJwtExpired(token: string): boolean {
   try {
     const payloadBase64 = token.split('.')[1]

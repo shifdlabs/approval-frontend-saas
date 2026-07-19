@@ -1,5 +1,6 @@
 import { Position } from '@/models/positions/position';
 import { computed, onMounted, ref } from 'vue';
+import { VForm } from 'vuetify/components';
 export function positionsController() {
     const positionsList = ref<Position[]>([])
 const filteredPositionsList = ref<Position[]>([])
@@ -102,17 +103,24 @@ onMounted(() => {
 
 // ===> Add New Position Logic
 const newPosition = ref<Position>({ name: '' });
-const isFormValid = ref(false);
 const formRules = {
   required: (value: string) => !!value || 'Required.',
 };
+
+// Bound via `ref="refCreateForm"` / `ref="refEditForm"` in positions.vue —
+// call .validate() explicitly on submit (the pattern every other dialog in
+// this app uses, per CLAUDE.md) rather than gating the button off the
+// VForm's v-model, which doesn't reliably flip true/false here.
+const refCreateForm = ref<VForm>()
+const refEditForm = ref<VForm>()
 
 const closeCreatePositionDialog = () => {
   isCreatePositionDialogVisible.value = false;
 };
 
 const submitNewPositionForm = async () => {
-  if (!isFormValid.value) return
+  const { valid } = await refCreateForm.value?.validate() ?? { valid: false }
+  if (!valid) return
 
   try {
     const { error } = await useApi('/position', {
@@ -138,26 +146,27 @@ const submitNewPositionForm = async () => {
 
 // ===> Edit Position Logic
 const submitEditPositionForm = async () => {
-  if (isFormValid.value && selectedPosition.value) {
-    try {
-      const { error } = await useApi('/position', {
-        method: 'PUT',
-        body: JSON.stringify(selectedPosition.value),
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+  const { valid } = await refEditForm.value?.validate() ?? { valid: false }
+  if (!valid || !selectedPosition.value) return
 
-      if (error.value) {
-        console.error(error.value)
-        return
+  try {
+    const { error } = await useApi('/position', {
+      method: 'PUT',
+      body: JSON.stringify(selectedPosition.value),
+      headers: {
+        'Content-Type': 'application/json'
       }
+    });
 
-      isUpdatePositionDialogVisible.value = false
-      fetchPositions()
-    } catch (e) {
-      console.error(e)
+    if (error.value) {
+      console.error(error.value)
+      return
     }
+
+    isUpdatePositionDialogVisible.value = false
+    fetchPositions()
+  } catch (e) {
+    console.error(e)
   }
 }
 
@@ -191,8 +200,9 @@ return {
     fetchPositions,
     applyFilters,
     newPosition,
-    isFormValid,
     formRules,
+    refCreateForm,
+    refEditForm,
     closeCreatePositionDialog,
     submitNewPositionForm,
     submitEditPositionForm,

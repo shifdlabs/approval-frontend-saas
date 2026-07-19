@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import * as XLSX from 'xlsx';
+import { Workbook } from 'exceljs';
 
 interface Props {
   isDialogVisible: boolean;
@@ -24,16 +25,15 @@ const totalSteps = 3;
 const selectedFile = ref<File | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
-// Column mapping
+// Column mapping — `firstName` is kept as the internal/wire key (Approval
+// Backend's /user/import/preview parses columnMapping["firstName"]) even
+// though the UI now labels it "Nama Column" and treats it as the single
+// full-name field sent to SIS register as `name`.
 const excelColumns = ref<string[]>([]);
 const columnMapping = ref({
-  employeeID: '',
   email: '',
   firstName: '',
-  lastName: '',
-  phone: '',
   role: '',
-  positionID: '',
   password: '',
 });
 
@@ -43,22 +43,39 @@ const previewErrors = ref<any[]>([]);
 const previewWarnings = ref<any[]>([]);
 const isLoadingPreview = ref(false);
 
-// Bulk import
+// Bulk import — each row is processed as two sequential SIS calls (register
+// the identity, then add it to this org). Approval Backend's own bulk-create
+// endpoint (POST /user/import/bulk) is no longer called: it created
+// local-only accounts that don't exist in SIS and can't log in. The local
+// Approval `users` row for each member is created automatically on their
+// first login (see config/middleware/jwks_middleware.go
+// ensureUserProvisioned) — there is nothing left for Approval's own API to
+// do here.
+interface RowResult {
+  index: number;
+  email: string;
+  status: 'SUCCESS_NEW' | 'SUCCESS_EXISTING' | 'FAILED' | 'SKIPPED';
+  reason?: string;
+}
+
 const isImporting = ref(false);
-const importResult = ref<any>(null);
+const importStarted = ref(false);
+const currentProcessingIndex = ref(0);
+const rowResults = ref<RowResult[]>([]);
 const customPassword = ref('');
 const showPassword = ref(false);
-const showSuccessDialog = ref(false);
-const successMessage = ref('');
+
+const importSummary = computed(() => ({
+  successNew: rowResults.value.filter(r => r.status === 'SUCCESS_NEW').length,
+  successExisting: rowResults.value.filter(r => r.status === 'SUCCESS_EXISTING').length,
+  failed: rowResults.value.filter(r => r.status === 'FAILED'),
+  skipped: rowResults.value.filter(r => r.status === 'SKIPPED'),
+}));
 
 const previewHeaders = [
-  { title: 'Employee ID', key: 'employeeID' },
+  { title: 'Nama', key: 'firstName' },
   { title: 'Email', key: 'email' },
-  { title: 'First Name', key: 'firstName' },
-  { title: 'Last Name', key: 'lastName' },
-  { title: 'Phone', key: 'phone' },
   { title: 'Role', key: 'role' },
-  { title: 'Position', key: 'positionID' },
 ];
 
 
@@ -76,22 +93,19 @@ const resetDialog = () => {
   selectedFile.value = null;
   excelColumns.value = [];
   columnMapping.value = {
-    employeeID: '',
     email: '',
     firstName: '',
-    lastName: '',
-    phone: '',
     role: '',
-    positionID: '',
     password: '',
   };
   previewData.value = [];
   previewErrors.value = [];
   previewWarnings.value = [];
-  importResult.value = null;
+  importStarted.value = false;
+  currentProcessingIndex.value = 0;
+  rowResults.value = [];
   customPassword.value = '';
   showPassword.value = false;
-  showSuccessDialog.value = false;
 };
 
 const onFileSelected = (event: Event) => {
@@ -230,7 +244,109 @@ const loadPreview = async () => {
   }
 };
 
-const performBulkImport = async () => {
+// Template only needs what register/add-to-org actually consume (name,
+// email, password, role). employeeID/position/access used to be columns
+// here too, but those are now set after the user's first login
+// (auto-provisioning middleware), not at import time — see importOneRow
+// below. Uses exceljs (not the `xlsx` package used for reading uploads
+// above) because only exceljs can write real cell styling — the gray
+// italic example row needs that.
+const downloadTemplate = async () => {
+  const workbook = new Workbook();
+
+  const dataSheet = workbook.addWorksheet('Data User');
+  dataSheet.addRow(['Nama', 'Email', 'Password', 'Role (optional)']);
+  const exampleRow = dataSheet.addRow(['(Nama lengkap)', '(Email aktif)', '(Min. 8 karakter)', '(admin / member)']);
+
+  dataSheet.getRow(1).font = { bold: true };
+  exampleRow.eachCell(cell => {
+    cell.font = { italic: true, color: { argb: 'FF808080' } };
+  });
+  [24, 28, 20, 20].forEach((width, idx) => {
+    dataSheet.getColumn(idx + 1).width = width;
+  });
+
+  const instructionSheet = workbook.addWorksheet('Petunjuk');
+  instructionSheet.addRow(['Password minimal 8 karakter.']);
+  instructionSheet.addRow(['Posisi dan ID karyawan dapat diatur setelah user login pertama kali.']);
+  instructionSheet.addRow(['Role: isi admin atau member. Kosongkan untuk default member.']);
+  instructionSheet.getColumn(1).width = 70;
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'Template_Import_User.xlsx';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+const generateSecurePassword = (): string => {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const special = '!@#$%&*()';
+  const pick = (chars: string) => chars[Math.floor(Math.random() * chars.length)];
+
+  const required = [pick(upper), pick(lower), pick(digits), pick(special)];
+  const rest = Array.from({ length: 8 }, () => pick(upper + lower + digits + special));
+
+  return [...required, ...rest].sort(() => Math.random() - 0.5).join('');
+};
+
+// Role column accepts either the new text values ("admin"/"member") or the
+// legacy numeric codes (99/1) some sheets still use. Anything else — empty,
+// unrecognized, or just not mapped — defaults to "member".
+const resolveSisRole = (rawRole: unknown): 'admin' | 'member' => {
+  const value = String(rawRole ?? '').trim().toLowerCase();
+  return value === 'admin' || value === '99' ? 'admin' : 'member';
+};
+
+// One row = one member: register the global SIS identity, then attach it to
+// this org. If the identity already exists in SIS (e.g. invited before, or
+// a member of another org), that's not a failure — skip straight to
+// attaching it here.
+const importOneRow = async (row: any): Promise<{ status: RowResult['status'], reason?: string }> => {
+  const name = String(row.firstName ?? '').trim() || row.email;
+  const password = row.password || customPassword.value || generateSecurePassword();
+
+  let alreadyInSis = false;
+
+  try {
+    await sisApi('/api/auth/register', {
+      method: 'POST',
+      body: { name, email: row.email, password },
+    });
+  } catch (e) {
+    const sisErr = parseSisError(e);
+    if (sisErr.code === 'EMAIL_ALREADY_EXISTS') {
+      alreadyInSis = true;
+    } else {
+      return { status: 'FAILED', reason: sisErr.message };
+    }
+  }
+
+  const orgId = getCurrentOrgId();
+  try {
+    await sisApi(`/api/orgs/${orgId}/members`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${useCookie('accessToken').value}` },
+      body: { email: row.email, role: resolveSisRole(row.role) },
+    });
+  } catch (e) {
+    const sisErr = parseSisError(e);
+    if (sisErr.code === 'USER_LIMIT_REACHED')
+      return { status: 'SKIPPED', reason: 'Batas user tercapai' };
+    return { status: 'FAILED', reason: sisErr.message };
+  }
+
+  return { status: alreadyInSis ? 'SUCCESS_EXISTING' : 'SUCCESS_NEW' };
+};
+
+const performImport = async () => {
   if (previewData.value.length === 0) return;
 
   if (customPassword.value) {
@@ -242,83 +358,53 @@ const performBulkImport = async () => {
   }
 
   isImporting.value = true;
+  importStarted.value = true;
+  rowResults.value = [];
+  currentProcessingIndex.value = 0;
 
-  try {
-    
-    const { data, error } = await useApi('/user/import/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        users: previewData.value,
-        customPassword: customPassword.value || '',
-      }),
-    }).json<{ data: { successCount: number, failedCount: number, errors: any[] } }>();
+  const rows = previewData.value;
+  let limitReached = false;
 
-    if (data.value?.data) {
-      importResult.value = data.value.data;
-      console.log('Bulk import result:', data.value.data);
-      
-      // Check if any users were successfully imported
-      if (data.value.data.successCount > 0) {
-        console.log(`Import successful: ${data.value.data.successCount} users created`);
-        emit('update:isRefetchList', true);
-        
-        // Show success dialog
-        successMessage.value = `Successfully imported ${data.value.data.successCount} user(s).${data.value.data.failedCount > 0 ? ` Failed: ${data.value.data.failedCount}` : ''}`;
-        showSuccessDialog.value = true;
-        
-        // Auto close success dialog after 2 seconds, then close parent dialog
-        setTimeout(() => {
-          showSuccessDialog.value = false;
-          setTimeout(() => {
-            emit('update:isDialogVisible', false);
-          }, 300);
-        }, 2000);
-      } else {
-        // All imports failed - show error details
-        let errorMessage = `Import failed! ${data.value.data.failedCount} user(s) could not be imported.\n\n`;
-        if (data.value.data.errors && data.value.data.errors.length > 0) {
-          errorMessage += 'Errors:\n';
-          data.value.data.errors.forEach((err: any) => {
-            errorMessage += `Row ${err.row} (${err.field}): ${err.message}\n`;
-          });
-        }
-        alert(errorMessage);
-      }
-    } else {
-      console.error('Bulk import failed:', error.value);
-      alert('Bulk import failed. Please try again.');
+  for (let i = 0; i < rows.length; i++) {
+    currentProcessingIndex.value = i + 1;
+
+    const result = await importOneRow(rows[i]);
+    rowResults.value.push({ index: i + 1, email: rows[i].email, status: result.status, reason: result.reason });
+
+    if (result.status === 'SKIPPED') {
+      limitReached = true;
+      break;
     }
-  } catch (e) {
-    console.error('Error during bulk import:', e);
-    alert('An error occurred during bulk import.');
-  } finally {
-    isImporting.value = false;
   }
+
+  if (limitReached) {
+    for (let j = rowResults.value.length; j < rows.length; j++) {
+      rowResults.value.push({ index: j + 1, email: rows[j].email, status: 'SKIPPED', reason: 'Batas user tercapai' });
+    }
+  }
+
+  isImporting.value = false;
+
+  if (importSummary.value.successNew + importSummary.value.successExisting > 0) {
+    emit('update:isRefetchList', true);
+  }
+};
+
+const closeAfterImport = () => {
+  emit('update:isDialogVisible', false);
 };
 
 const canProceedToNextStep = computed(() => {
   if (currentStep.value === 1) {
     return selectedFile.value !== null;
   } else if (currentStep.value === 2) {
-    // At least email and firstName should be mapped
-    return columnMapping.value.email !== '' && columnMapping.value.firstName !== '';
+    // Nama, Email, and Password columns are required; Role is optional.
+    return columnMapping.value.email !== '' && columnMapping.value.firstName !== '' && columnMapping.value.password !== '';
   }
   return false;
 });
 
-const getRoleText = (role: number) => {
-  if (role === 99) return 'Admin';
-  if (role === 1) return 'User';
-  if (role === 0) return '-';
-  return `Role ${role}`;
-};
-
-const getPositionName = (positionID: string) => {
-  if (!positionID) return '-';
-  const position = props.positions.find(p => p.id === positionID);
-  return position ? position.name : '-';
-};
+const getRoleText = (role: number) => (role === 99 ? 'Admin' : 'Member');
 </script>
 
 <template>
@@ -328,7 +414,7 @@ const getPositionName = (positionID: string) => {
     persistent
     @update:model-value="(val) => emit('update:isDialogVisible', val)"
   >
-    <VCard class="bm-dialog" style="border-radius: 16px !important;">
+    <VCard class="bm-dialog imp-dialog">
       <div class="bmd-head">
         <div class="bmd-mark">
           <VIcon icon="tabler-file-upload" size="22" />
@@ -342,242 +428,249 @@ const getPositionName = (positionID: string) => {
         </button>
       </div>
 
-      <VDivider />
-
-      <VCardText class="pa-6">
+      <div class="bmd-body imp-body">
         <!-- Stepper -->
-        <VStepper v-model="currentStep" :items="totalSteps" flat>
+        <VStepper v-model="currentStep" flat>
+          <VStepperHeader>
+            <VStepperItem :value="1" title="Upload Excel File" />
+            <VDivider />
+            <VStepperItem :value="2" title="Map Columns" />
+            <VDivider />
+            <VStepperItem :value="3" title="Preview & Import" />
+          </VStepperHeader>
+
+          <VStepperWindow>
           <!-- Step 1: Upload File -->
-          <VStepperItem value="1" title="Upload Excel File">
-            <div class="pa-4">
-              <p class="text-body-1 mb-4">
+          <VStepperWindowItem :value="1">
+            <div class="d-flex flex-wrap justify-space-between align-center gap-3 mb-4">
+              <p class="text-body-1 ma-0">
                 Upload an Excel file (.xlsx) containing user data.
               </p>
-
-              <VFileInput
-                ref="fileInputRef"
-                v-model="selectedFile"
-                label="Select Excel File"
-                accept=".xlsx,.xls"
-                prepend-icon="tabler-file-upload"
-                @change="onFileSelected"
-              />
-
-              <VAlert v-if="selectedFile" type="success" class="mt-4">
-                File selected: {{ selectedFile.name }}
-              </VAlert>
+              <VBtn
+                color="var(--bm-navy)"
+                variant="tonal"
+                size="small"
+                prepend-icon="tabler-download"
+                @click="downloadTemplate"
+              >
+                Download Template
+              </VBtn>
             </div>
-          </VStepperItem>
+
+            <VFileInput
+              ref="fileInputRef"
+              v-model="selectedFile"
+              label="Select Excel File"
+              accept=".xlsx,.xls"
+              prepend-icon="tabler-file-upload"
+              @change="onFileSelected"
+            />
+
+            <VAlert v-if="selectedFile" type="success" variant="tonal" class="mt-4">
+              File selected: {{ selectedFile.name }}
+            </VAlert>
+          </VStepperWindowItem>
 
           <!-- Step 2: Column Mapping -->
-          <VStepperItem value="2">
-            <div class="pa-4">
-              <VAlert color="#7166e8" class="mb-4">
-                Fields marked with * are required.
-              </VAlert>
+          <VStepperWindowItem :value="2">
+            <VAlert color="var(--bm-navy)" variant="tonal" class="mb-4">
+              Fields marked with * are required.
+            </VAlert>
 
-              <VRow>
-                <VCol cols="12" md="6">
-                  <AppSelect
-                    v-model="columnMapping.employeeID"
-                    label="Employee ID Column"
-                    placeholder="Select column"
-                    :items="excelColumns"
-                    clearable
-                  />
-                </VCol>
+            <VRow>
+              <VCol cols="12" md="6">
+                <AppSelect
+                  v-model="columnMapping.email"
+                  label="Email Column *"
+                  placeholder="Select column"
+                  :items="excelColumns"
+                  clearable
+                />
+              </VCol>
 
-                <VCol cols="12" md="6">
-                  <AppSelect
-                    v-model="columnMapping.email"
-                    label="Email Column *"
-                    placeholder="Select column"
-                    :items="excelColumns"
-                    clearable
-                  />
-                </VCol>
+              <VCol cols="12" md="6">
+                <AppSelect
+                  v-model="columnMapping.firstName"
+                  label="Nama Column *"
+                  placeholder="Select column"
+                  :items="excelColumns"
+                  clearable
+                />
+              </VCol>
 
-                <VCol cols="12" md="6">
-                  <AppSelect
-                    v-model="columnMapping.firstName"
-                    label="First Name Column *"
-                    placeholder="Select column"
-                    :items="excelColumns"
-                    clearable
-                  />
-                </VCol>
+              <VCol cols="12" md="6">
+                <AppSelect
+                  v-model="columnMapping.password"
+                  label="Password Column *"
+                  placeholder="Select column"
+                  :items="excelColumns"
+                  clearable
+                />
+              </VCol>
 
-                <VCol cols="12" md="6">
-                  <AppSelect
-                    v-model="columnMapping.lastName"
-                    label="Last Name Column"
-                    placeholder="Select column"
-                    :items="excelColumns"
-                    clearable
-                  />
-                </VCol>
-
-                <VCol cols="12" md="6">
-                  <AppSelect
-                    v-model="columnMapping.phone"
-                    label="Phone Column"
-                    placeholder="Select column"
-                    :items="excelColumns"
-                    clearable
-                  />
-                </VCol>
-
-                <VCol cols="12" md="6">
-                  <AppSelect
-                    v-model="columnMapping.role"
-                    label="Role Column (99=Admin, 1=User)"
-                    placeholder="Select column"
-                    :items="excelColumns"
-                    clearable
-                  />
-                </VCol>
-
-                <VCol cols="12" md="6">
-                  <AppSelect
-                    v-model="columnMapping.positionID"
-                    label="Position Column (Name or ID)"
-                    placeholder="Select column (e.g., Manager, Staff, or UUID)"
-                    :items="excelColumns"
-                    clearable
-                  />
-                </VCol>
-
-                <VCol cols="12" md="6">
-                  <AppSelect
-                    v-model="columnMapping.password"
-                    label="Password Column (optional)"
-                    placeholder="Select column"
-                    :items="excelColumns"
-                    clearable
-                  />
-                </VCol>
-              </VRow>
-            </div>
-          </VStepperItem>
+              <VCol cols="12" md="6">
+                <AppSelect
+                  v-model="columnMapping.role"
+                  label="Role Column (optional)"
+                  placeholder="Select column"
+                  hint="Nilai yang diterima: admin atau member. Kosongkan untuk default member."
+                  persistent-hint
+                  :items="excelColumns"
+                  clearable
+                />
+              </VCol>
+            </VRow>
+          </VStepperWindowItem>
 
           <!-- Step 3: Preview -->
-          <VStepperItem value="3" title="Preview & Import">
-            <div class="pa-4">
-              <div class="d-flex justify-space-between align-center mb-4">
-                <div>
-                  <p class="text-body-1 ma-0 mb-1">
-                    Review the data before importing. Total users: {{ previewData.length }}
-                  </p>
-                  <p class="text-caption text-medium-emphasis ma-0">
-                    Need to change column mapping? Click the button on the right
-                  </p>
-                </div>
-                <VBtn
-                  color="#7166e8"
-                  variant="tonal"
-                  size="small"
-                  prepend-icon="tabler-edit"
-                  @click="remapColumns"
-                >
-                  Edit Mapping
-                </VBtn>
+          <VStepperWindowItem :value="3">
+            <div class="d-flex flex-wrap justify-space-between align-center gap-3 mb-4">
+              <div>
+                <p class="text-body-1 ma-0 mb-1">
+                  Review the data before importing. Total users: {{ previewData.length }}
+                </p>
+                <p class="text-caption text-medium-emphasis ma-0">
+                  Need to change column mapping? Click the button on the right
+                </p>
               </div>
-
-              <!-- Password Configuration Section -->
-              <VDivider class="mb-4" />
-              <div class="text-h6 mb-3">
-                <VIcon icon="tabler-key" color="#7166e8" class="me-2" />
-                Password Configuration
-              </div>
-              <VRow class="mb-4">
-                <VCol cols="12" md="6">
-                  <AppTextField
-                    v-model="customPassword"
-                    :type="showPassword ? 'text' : 'password'"
-                    label="Custom Password for All Users (Optional)"
-                    placeholder="Leave empty to auto-generate a secure random password"
-                    hint="Must be 8+ chars with uppercase, lowercase, digit, and special character (!@#$%&*())"
-                    persistent-hint
-                    :append-inner-icon="showPassword ? 'tabler-eye-off' : 'tabler-eye'"
-                    @click:append-inner="showPassword = !showPassword"
-                  />
-                </VCol>
-              </VRow>
-              <VDivider class="mb-4" />
-
-              <VAlert color="#7166e8" class="mb-4">
-                <strong>Default Values:</strong> Fields not mapped will use defaults during import:
-                <ul class="mt-2">
-                  <li>Role: Regular User (1)</li>
-                  <li>Password: {{ customPassword ? 'Custom password set' : 'Auto-generated (secure random)' }}</li>
-                  <li>Access: Enabled</li>
-                </ul>
-              </VAlert>
-
-              <!-- Errors -->
-              <VAlert v-if="previewErrors.length > 0" type="error" class="mb-4">
-                <div class="text-h6 mb-2">Errors ({{ previewErrors.length }})</div>
-                <ul>
-                  <li v-for="(error, idx) in previewErrors" :key="idx">
-                    Row {{ error.row }}: {{ error.field }} - {{ error.message }}
-                  </li>
-                </ul>
-              </VAlert>
-
-              <!-- Warnings -->
-              <VAlert v-if="previewWarnings.length > 0" type="warning" class="mb-4">
-                <div class="text-h6 mb-2">Warnings ({{ previewWarnings.length }})</div>
-                <ul>
-                  <li v-for="(warning, idx) in previewWarnings" :key="idx">
-                    Row {{ warning.row }}: {{ warning.field }} - {{ warning.message }}
-                  </li>
-                </ul>
-              </VAlert>
-
-              <!-- Preview Data Section -->
-              <div class="text-h6 mb-3">
-                <VIcon icon="tabler-table" color="#7166e8" class="me-2" />
-                Preview Data
-              </div>
-
-              <!-- Preview Table -->
-              <VDataTable
-                :headers="previewHeaders"
-                :items="previewData"
-                :items-per-page="10"
-                density="comfortable"
-                class="preview-table"
+              <VBtn
+                v-if="!importStarted"
+                color="var(--bm-navy)"
+                variant="tonal"
+                size="small"
+                prepend-icon="tabler-edit"
+                @click="remapColumns"
               >
-                <template #item.role="{ item }">
-                  <VChip 
-                    :color="item.role === 99 ? '#7166e8' : item.role === 1 ? 'default' : 'secondary'" 
-                    size="small"
-                  >
-                    {{ getRoleText(item.role) }}
-                  </VChip>
-                </template>
-                <template #item.positionID="{ item }">
-                  <VChip 
-                    color="default" 
-                    size="small"
-                  >
-                    {{ getPositionName(item.positionID) }}
-                  </VChip>
-                </template>
-              </VDataTable>
+                Edit Mapping
+              </VBtn>
             </div>
-          </VStepperItem>
+
+            <!-- Progress indicator while rows are processed sequentially
+                 against SIS (register, then add-to-org, per row). -->
+            <VAlert v-if="isImporting" color="var(--bm-navy)" variant="tonal" class="mb-4">
+              <div class="mb-2">Memproses {{ currentProcessingIndex }} dari {{ previewData.length }} user...</div>
+              <VProgressLinear
+                :model-value="(currentProcessingIndex / previewData.length) * 100"
+                color="var(--bm-navy)"
+                height="8"
+                rounded
+              />
+            </VAlert>
+
+            <!-- Result summary, shown once sequential processing has
+                 finished (success or not). -->
+            <VAlert v-if="importStarted && !isImporting" type="info" variant="tonal" class="mb-4">
+              <div class="text-h6 mb-2">Hasil Import</div>
+              <ul class="mb-2">
+                <li>{{ importSummary.successNew }} berhasil ditambahkan</li>
+                <li>{{ importSummary.successExisting }} sudah terdaftar dan berhasil ditambahkan ke org</li>
+                <li>{{ importSummary.failed.length }} gagal</li>
+                <li>{{ importSummary.skipped.length }} dilewati karena batas user tercapai</li>
+              </ul>
+
+              <template v-if="importSummary.failed.length > 0">
+                <div class="text-subtitle-2 mb-1">Detail gagal:</div>
+                <ul class="mb-2">
+                  <li v-for="row in importSummary.failed" :key="'failed-' + row.index">
+                    Row {{ row.index }} ({{ row.email }}): {{ row.reason }}
+                  </li>
+                </ul>
+              </template>
+
+              <template v-if="importSummary.skipped.length > 0">
+                <div class="text-subtitle-2 mb-1">Dilewati:</div>
+                <ul>
+                  <li v-for="row in importSummary.skipped" :key="'skipped-' + row.index">
+                    Row {{ row.index }} ({{ row.email }}): {{ row.reason }}
+                  </li>
+                </ul>
+              </template>
+            </VAlert>
+
+            <!-- Password Configuration Section -->
+            <VDivider class="mb-4" />
+            <div class="text-h6 mb-3 d-flex align-center">
+              <VIcon icon="tabler-key" color="var(--bm-navy)" class="me-2" />
+              Password Configuration
+            </div>
+            <VRow class="mb-4">
+              <VCol cols="12" md="6">
+                <AppTextField
+                  v-model="customPassword"
+                  :type="showPassword ? 'text' : 'password'"
+                  label="Custom Password for All Users (Optional)"
+                  placeholder="Leave empty to auto-generate a secure random password"
+                  hint="Must be 8+ chars with uppercase, lowercase, digit, and special character (!@#$%&*())"
+                  persistent-hint
+                  :append-inner-icon="showPassword ? 'tabler-eye-off' : 'tabler-eye'"
+                  @click:append-inner="showPassword = !showPassword"
+                />
+              </VCol>
+            </VRow>
+            <VDivider class="mb-4" />
+
+            <VAlert color="var(--bm-navy)" variant="tonal" class="mb-4">
+              <strong>Default Values:</strong> Fields not mapped will use defaults during import:
+              <ul class="mt-2">
+                <li>Role: Member (default if Role column is empty or unrecognized)</li>
+                <li>Password: {{ customPassword ? 'Custom password set' : 'Auto-generated (secure random)' }}</li>
+              </ul>
+            </VAlert>
+
+            <!-- Errors -->
+            <VAlert v-if="previewErrors.length > 0" type="error" variant="tonal" class="mb-4">
+              <div class="text-h6 mb-2">Errors ({{ previewErrors.length }})</div>
+              <ul>
+                <li v-for="(error, idx) in previewErrors" :key="idx">
+                  Row {{ error.row }}: {{ error.field }} - {{ error.message }}
+                </li>
+              </ul>
+            </VAlert>
+
+            <!-- Warnings -->
+            <VAlert v-if="previewWarnings.length > 0" type="warning" variant="tonal" class="mb-4">
+              <div class="text-h6 mb-2">Warnings ({{ previewWarnings.length }})</div>
+              <ul>
+                <li v-for="(warning, idx) in previewWarnings" :key="idx">
+                  Row {{ warning.row }}: {{ warning.field }} - {{ warning.message }}
+                </li>
+              </ul>
+            </VAlert>
+
+            <!-- Preview Data Section -->
+            <div class="text-h6 mb-3 d-flex align-center">
+              <VIcon icon="tabler-table" color="var(--bm-navy)" class="me-2" />
+              Preview Data
+            </div>
+
+            <!-- Preview Table -->
+            <VDataTable
+              :headers="previewHeaders"
+              :items="previewData"
+              :items-per-page="10"
+              density="comfortable"
+              class="preview-table"
+            >
+              <template #item.role="{ item }">
+                <VChip
+                  :color="item.role === 99 ? 'var(--bm-navy)' : 'default'"
+                  size="small"
+                >
+                  {{ getRoleText(item.role) }}
+                </VChip>
+              </template>
+            </VDataTable>
+          </VStepperWindowItem>
+          </VStepperWindow>
         </VStepper>
-      </VCardText>
+      </div>
 
-      <VDivider />
-
-      <div class="bmd-foot" style="border-top: 1px solid var(--bm-line-soft);">
+      <div class="bmd-foot">
         <VBtn
-          v-if="currentStep > 1"
+          v-if="currentStep > 1 && !importStarted"
           class="bmd-btn-ghost"
           variant="text"
-          style="height:50px; border-radius:13px; font-weight:700; border: 1.5px solid oklch(0.88 0.025 264); color: var(--bm-navy);"
+          height="50"
           @click="goToPreviousStep"
         >
           Previous
@@ -589,43 +682,56 @@ const getPositionName = (positionID: string) => {
           :disabled="!canProceedToNextStep || isLoadingPreview"
           :loading="isLoadingPreview"
           class="bmd-btn-primary"
-          style="height:50px; border-radius:13px; font-weight:700; background: var(--bm-navy); color:#fff;"
+          height="50"
           @click="goToNextStep"
         >
           Next
         </VBtn>
 
         <VBtn
-          v-if="currentStep === totalSteps"
+          v-if="currentStep === totalSteps && !importStarted"
           :disabled="previewData.length === 0 || isImporting"
           :loading="isImporting"
           class="bmd-btn-primary"
-          style="height:50px; border-radius:13px; font-weight:700; background: var(--bm-navy); color:#fff;"
-          @click="performBulkImport"
+          height="50"
+          @click="performImport"
         >
-          Bulk Insert ({{ previewData.length }} users)
+          Import ({{ previewData.length }} users)
         </VBtn>
-      </div>
-    </VCard>
-  </VDialog>
 
-  <!-- Success Dialog -->
-  <VDialog v-model="showSuccessDialog" max-width="400">
-    <VCard class="bm-dialog">
-      <div class="bmd-head">
-        <div class="bmd-mark" style="background: oklch(0.56 0.14 148);">
-          <VIcon icon="tabler-circle-check" size="22" />
-        </div>
-        <div class="bmd-titles">
-          <h2>Import Successful!</h2>
-          <p>{{ successMessage }}</p>
-        </div>
+        <VBtn
+          v-if="currentStep === totalSteps && importStarted && !isImporting"
+          class="bmd-btn-primary"
+          height="50"
+          @click="closeAfterImport"
+        >
+          Tutup
+        </VBtn>
       </div>
     </VCard>
   </VDialog>
 </template>
 
 <style scoped>
+/* Keeps the head/footer fixed and lets only the stepper content scroll —
+   this dialog's step 3 (preview table + alerts) can get much taller than
+   the viewport, unlike the rest of the app's single-screen bm-dialogs. */
+.imp-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;
+}
+
+.imp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.bmd-foot {
+  border-top: 1px solid var(--bm-line-soft);
+}
+
 .preview-table {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 4px;
@@ -636,7 +742,7 @@ const getPositionName = (positionID: string) => {
 }
 
 :deep(.preview-table .v-data-table__thead) {
-  background-color: rgba(113, 102, 232, 0.08); /* #7166e8 with opacity */
+  background-color: color-mix(in oklab, var(--bm-navy) 8%, transparent);
 }
 
 :deep(.preview-table .v-data-table__thead th) {
@@ -653,10 +759,6 @@ const getPositionName = (positionID: string) => {
 }
 
 :deep(.preview-table tbody tr:hover) {
-  background-color: rgba(113, 102, 232, 0.08) !important; /* #7166e8 with opacity */
-}
-
-.elevation-1 {
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background-color: color-mix(in oklab, var(--bm-navy) 8%, transparent) !important;
 }
 </style>

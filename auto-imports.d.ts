@@ -71,6 +71,7 @@ declare global {
   const formatToWeekdayTime: typeof import('./src/utils/converter')['formatToWeekdayTime']
   const getActivePinia: typeof import('pinia')['getActivePinia']
   const getCurrentInstance: typeof import('vue')['getCurrentInstance']
+  const getCurrentOrgId: typeof import('./src/composables/useApi')['getCurrentOrgId']
   const getCurrentScope: typeof import('vue')['getCurrentScope']
   const getExtension: typeof import('./src/utils/icon.mapped')['getExtension']
   const h: typeof import('vue')['h']
@@ -480,6 +481,7 @@ declare module 'vue' {
     readonly formatToWeekdayTime: UnwrapRef<typeof import('./src/utils/converter')['formatToWeekdayTime']>
     readonly getActivePinia: UnwrapRef<typeof import('pinia')['getActivePinia']>
     readonly getCurrentInstance: UnwrapRef<typeof import('vue')['getCurrentInstance']>
+    readonly getCurrentOrgId: UnwrapRef<typeof import('./src/composables/useApi')['getCurrentOrgId']>
     readonly getCurrentScope: UnwrapRef<typeof import('vue')['getCurrentScope']>
     readonly getExtension: UnwrapRef<typeof import('./src/utils/icon.mapped')['getExtension']>
     readonly h: UnwrapRef<typeof import('vue')['h']>

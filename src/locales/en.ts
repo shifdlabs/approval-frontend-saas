@@ -51,6 +51,8 @@ const en = {
     pleaseWait: 'Please wait',
     errorFormInput: 'Please follow the rules of the input form.',
     emailAlreadyRegistered: 'Inputted email already registered.',
+    name: 'Name',
+    namePh: 'Enter full name',
     firstName: 'First Name',
     firstNamePh: 'Enter your first name',
     lastName: 'Last Name',
@@ -113,7 +115,9 @@ const en = {
     loginTitle: 'Welcome to Shifd',
     loginSubtitle: 'Please sign-in to your account',
     email: 'Email',
-    emailPh: 'johndoe@email.com',
+    // '@' is a vue-i18n special char (linked-message syntax) and must be
+    // escaped via literal interpolation, or t() throws a compile error.
+    emailPh: "johndoe{'@'}email.com",
     password: 'Password',
     loginBtn: 'Login',
     loggingIn: 'Logging in...',

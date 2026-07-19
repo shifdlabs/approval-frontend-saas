@@ -14,8 +14,9 @@ const {
   deleteItem,
   applyFilters,
   newPosition,
-  isFormValid,
   formRules,
+  refCreateForm,
+  refEditForm,
   closeCreatePositionDialog,
   submitNewPositionForm,
   submitEditPositionForm,
@@ -111,7 +112,7 @@ const { t } = useI18n()
           <VIcon icon="tabler-x" size="18" />
         </button>
       </div>
-      <VForm ref="refCreateForm" v-model="isFormValid">
+      <VForm ref="refCreateForm">
         <div class="bmd-body">
           <AppTextField
             v-model="newPosition.name"
@@ -124,7 +125,7 @@ const { t } = useI18n()
           <button class="bmd-btn bmd-btn-ghost" type="button" @click="closeCreatePositionDialog">
             {{ t('positions.cancel') }}
           </button>
-          <button class="bmd-btn bmd-btn-primary" type="button" :disabled="!isFormValid" @click="submitNewPositionForm">
+          <button class="bmd-btn bmd-btn-primary" type="button" @click="submitNewPositionForm">
             {{ t('positions.add') }}
           </button>
         </div>
@@ -147,7 +148,7 @@ const { t } = useI18n()
           <VIcon icon="tabler-x" size="18" />
         </button>
       </div>
-      <VForm ref="refEditForm" v-model="isFormValid">
+      <VForm ref="refEditForm">
         <div class="bmd-body">
           <AppTextField
             v-model="selectedPositionName"
@@ -160,7 +161,7 @@ const { t } = useI18n()
           <button class="bmd-btn bmd-btn-ghost" type="button" @click="isUpdatePositionDialogVisible = false">
             {{ t('positions.cancel') }}
           </button>
-          <button class="bmd-btn bmd-btn-primary" type="button" :disabled="!isFormValid" @click="submitEditPositionForm">
+          <button class="bmd-btn bmd-btn-primary" type="button" @click="submitEditPositionForm">
             {{ t('positions.save') }}
           </button>
         </div>

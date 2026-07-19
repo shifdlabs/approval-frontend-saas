@@ -6,16 +6,23 @@ import { Position } from "@/models/positions/position";
 import { User } from "@/models/users/users";
 
 export const mapUser = (rawUser: any): User => {
+        const position = mapPosition(rawUser.position);
         return {
           ...rawUser,
           // override the position property with our mapped version
-          position: mapPosition(rawUser.position),
-          title: `${rawUser.firstName} ${rawUser.lastName} - ${mapPosition(rawUser.position).name}`
+          position,
+          title: `${rawUser.firstName} ${rawUser.lastName}${position ? ` - ${position.name}` : ''}`
         };
       };
 
 
-export const mapPosition = (rawPosition: any): Position => {
+// rawPosition is null for users who haven't had a position assigned yet
+// (e.g. auto-provisioned on first login — see approval-backend
+// ensureUserProvisioned, which never sets position_id).
+export const mapPosition = (rawPosition: any): Position | null => {
+        if (!rawPosition) {
+          return null;
+        }
         return {
           id: rawPosition.ID,     // mapping 'ID' from response to 'id'
           name: rawPosition.Name  // mapping 'Name' from response to 'name'

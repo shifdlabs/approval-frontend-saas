@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DOMPurify from 'dompurify'
 import TiptapEditor from '@/@core/components/TiptapEditor.vue'
 import { LetterTemplate } from '@/models/document/letter-template'
 
@@ -128,7 +129,7 @@ const openPreview = (tpl: LetterTemplate) => {
 }
 
 // Preview body: jika template body kosong, pakai lorem ipsum
-const previewBody = computed(() => previewTemplate.value?.body || LOREM_IPSUM)
+const previewBody = computed(() => DOMPurify.sanitize(previewTemplate.value?.body || LOREM_IPSUM))
 </script>
 
 <template>
@@ -181,7 +182,7 @@ const previewBody = computed(() => previewTemplate.value?.body || LOREM_IPSUM)
             <!-- Body preview snippet -->
             <div
               class="mt-3 text-body-2 text-secondary template-body-preview"
-              v-html="tpl.body || '<em>Tidak ada konten</em>'"
+              v-html="DOMPurify.sanitize(tpl.body || '<em>Tidak ada konten</em>')"
             />
           </VCardText>
 

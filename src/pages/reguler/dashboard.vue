@@ -319,6 +319,7 @@
 </template>
 
 <script setup>
+import DOMPurify from 'dompurify'
 import { useDashboardController } from '@/controllers/reguler/document-dashboard-controller'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -650,9 +651,9 @@ const mappedActivities = computed(() => {
     icon:      act.is_approved ? iconCheck : iconX,
     iconBg:    act.is_approved ? 'rgba(16,185,129,.15)' : 'rgba(239,68,68,.15)',
     iconColor: act.is_approved ? '#10b981' : '#ef4444',
-    text:      act.is_approved
+    text:      DOMPurify.sanitize(act.is_approved
       ? `<strong>${act.subject}</strong> ${t('dashboard.approvedBy')} <strong>${act.approver_name}</strong>`
-      : `<strong>${act.subject}</strong> ${t('dashboard.rejectedRevision')}`,
+      : `<strong>${act.subject}</strong> ${t('dashboard.rejectedRevision')}`),
     time: formatRelativeTime(act.updated_at),
   }))
 })
