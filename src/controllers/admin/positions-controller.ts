@@ -26,13 +26,16 @@ const isAlertVisible = ref(false)
 const alertMessage = ref('')
 
 const headers = [
-  { title: 'ID', key: 'id' },
   { title: 'NAME', key: 'name' },
   { title: 'ACTION', key: 'actions' },
 ]
 
+const createErrorMessage = ref('')
+const editErrorMessage = ref('')
+
 const editItem = (item: Position) => {
   selectedPosition.value = { ...item }
+  editErrorMessage.value = ''
   isUpdatePositionDialogVisible.value = true
 }
 
@@ -116,11 +119,15 @@ const refEditForm = ref<VForm>()
 
 const closeCreatePositionDialog = () => {
   isCreatePositionDialogVisible.value = false;
+  newPosition.value = { name: '' };
+  createErrorMessage.value = '';
 };
 
 const submitNewPositionForm = async () => {
   const { valid } = await refCreateForm.value?.validate() ?? { valid: false }
   if (!valid) return
+
+  createErrorMessage.value = ''
 
   try {
     const { error } = await useApi('/position', {
@@ -132,7 +139,8 @@ const submitNewPositionForm = async () => {
     })
 
     if (error.value) {
-      console.error(error.value)
+      const errData = error.value as any
+      createErrorMessage.value = errData?.message ?? 'Gagal menambahkan jabatan.'
       return
     }
 
@@ -140,6 +148,7 @@ const submitNewPositionForm = async () => {
     closeCreatePositionDialog()
     fetchPositions()
   } catch (e) {
+    createErrorMessage.value = 'Terjadi kesalahan tak terduga.'
     console.error(e)
   }
 }
@@ -148,6 +157,8 @@ const submitNewPositionForm = async () => {
 const submitEditPositionForm = async () => {
   const { valid } = await refEditForm.value?.validate() ?? { valid: false }
   if (!valid || !selectedPosition.value) return
+
+  editErrorMessage.value = ''
 
   try {
     const { error } = await useApi('/position', {
@@ -159,13 +170,15 @@ const submitEditPositionForm = async () => {
     });
 
     if (error.value) {
-      console.error(error.value)
+      const errData = error.value as any
+      editErrorMessage.value = errData?.message ?? 'Gagal menyimpan jabatan.'
       return
     }
 
     isUpdatePositionDialogVisible.value = false
     fetchPositions()
   } catch (e) {
+    editErrorMessage.value = 'Terjadi kesalahan tak terduga.'
     console.error(e)
   }
 }
@@ -194,6 +207,8 @@ return {
     isAlertVisible,
     alertMessage,
     headers,
+    createErrorMessage,
+    editErrorMessage,
     editItem,
     showDeletePositionDialog,
     deleteItem,

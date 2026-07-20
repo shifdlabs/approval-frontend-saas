@@ -9,6 +9,8 @@ const {
   isConfirmationDialogVisible,
   isUpdatePositionDialogVisible,
   headers,
+  createErrorMessage,
+  editErrorMessage,
   editItem,
   showDeletePositionDialog,
   deleteItem,
@@ -59,12 +61,6 @@ const { t } = useI18n()
           :items-per-page="10"
           show-select 
         >
-          <template #item.id="{ item }">
-            <VLabel>
-              {{ item.id }}
-            </VLabel>
-          </template>
-
           <template #item.name="{ item }">
             <VLabel>
               {{ item.name }}
@@ -114,6 +110,9 @@ const { t } = useI18n()
       </div>
       <VForm ref="refCreateForm">
         <div class="bmd-body">
+          <VAlert v-if="createErrorMessage" color="error" class="mb-4">
+            {{ createErrorMessage }}
+          </VAlert>
           <AppTextField
             v-model="newPosition.name"
             :label="t('positions.name')"
@@ -150,6 +149,9 @@ const { t } = useI18n()
       </div>
       <VForm ref="refEditForm">
         <div class="bmd-body">
+          <VAlert v-if="editErrorMessage" color="error" class="mb-4">
+            {{ editErrorMessage }}
+          </VAlert>
           <AppTextField
             v-model="selectedPositionName"
             :label="t('positions.name')"
