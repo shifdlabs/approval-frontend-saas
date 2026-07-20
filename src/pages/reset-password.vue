@@ -2,6 +2,7 @@
 import { VNodeRenderer } from '@layouts/components/VNodeRenderer';
 import { themeConfig } from '@themeConfig';
 import { VForm } from 'vuetify/components';
+import { sisApi, parseSisError } from '@/composables/useSisApi';
 
 definePage({
   meta: {
@@ -38,38 +39,26 @@ const onSubmit = () => {
     isError.value = false
 
     try {
-      const { data, error } = await useApi('/auth/reset-password', {
+      await sisApi('/api/auth/reset-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           token: token.value,
           new_password: newPassword.value,
-        }),
-      }).json<{ success: boolean; code: number; message: string; data: null }>()
-
-      if (data.value?.success) {
-        isSuccess.value = true
-      } else {
-        isError.value = true
-        const code = error.value?.code
-        const msg: string = error.value?.message || ''
-        if (code === 422) {
-          errorMessage.value = t('auth.resetPasswordComplexity')
-        } else if (code === 429) {
-          errorMessage.value = t('auth.error429')
-        } else if (code === 500) {
-          errorMessage.value = t('auth.error500')
-        } else if (code === 400 && msg.includes('already been used')) {
-          errorMessage.value = t('auth.resetTokenUsed')
-        } else if (code === 400) {
-          errorMessage.value = t('auth.resetTokenExpired')
-        } else {
-          errorMessage.value = t('auth.resetError')
-        }
-      }
-    } catch {
+        },
+      })
+      isSuccess.value = true
+    } catch (e) {
       isError.value = true
-      errorMessage.value = t('auth.resetError')
+      const { code } = parseSisError(e)
+      if (code === 'VALIDATION_ERROR') {
+        errorMessage.value = t('auth.resetPasswordComplexity')
+      } else if (code === 'RATE_LIMIT_EXCEEDED') {
+        errorMessage.value = t('auth.error429')
+      } else if (code === 'TOKEN_EXPIRED' || code === 'TOKEN_INVALID') {
+        errorMessage.value = t('auth.resetTokenExpired')
+      } else {
+        errorMessage.value = t('auth.resetError')
+      }
     } finally {
       isLoading.value = false
     }

@@ -2,6 +2,7 @@
 import { VNodeRenderer } from '@layouts/components/VNodeRenderer';
 import { themeConfig } from '@themeConfig';
 import { VForm } from 'vuetify/components';
+import { sisApi, parseSisError } from '@/composables/useSisApi';
 
 definePage({
   meta: {
@@ -25,28 +26,21 @@ const onSubmit = () => {
     isError.value = false
 
     try {
-      const { data, error } = await useApi('/auth/forgot-password', {
+      // SIS owns password recovery. It responds identically whether or not the
+      // email exists (enumeration-safe), so a 2xx here just means "handled".
+      await sisApi('/api/auth/forgot-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.value }),
-      }).json<{ success: boolean; code: number; message: string; data: null }>()
-
-      if (data.value?.success) {
-        isSent.value = true
-      } else {
-        isError.value = true
-        const code = error.value?.code
-        if (code === 429) {
-          errorMessage.value = t('auth.error429')
-        } else if (code === 500) {
-          errorMessage.value = t('auth.error500')
-        } else {
-          errorMessage.value = t('auth.forgotError')
-        }
-      }
-    } catch {
+        body: { email: email.value },
+      })
+      isSent.value = true
+    } catch (e) {
       isError.value = true
-      errorMessage.value = t('auth.forgotError')
+      const { code } = parseSisError(e)
+      if (code === 'RATE_LIMIT_EXCEEDED') {
+        errorMessage.value = t('auth.error429')
+      } else {
+        errorMessage.value = t('auth.forgotError')
+      }
     } finally {
       isLoading.value = false
     }

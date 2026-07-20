@@ -168,6 +168,13 @@ const en = {
     invalidTokenMsg: 'Please request a new link via the forgot password page.',
     requestNewLink: 'Request New Link',
     loginNow: 'Login Now',
+    activateTitle: 'Activate Your Account',
+    activateSubtitle: 'Set a password to activate your Shifd account.',
+    activateBtn: 'Activate Account',
+    activateSaving: 'Activating...',
+    activateSuccessTitle: 'Account Activated!',
+    activateSuccessMsg: 'Your password has been set. Please log in to start using Shifd.',
+    activateInvalidTokenMsg: 'This activation link is invalid or has expired. Please contact your administrator for a new link.',
   },
 
   dashboard: {

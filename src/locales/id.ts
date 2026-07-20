@@ -168,6 +168,13 @@ const id = {
     invalidTokenMsg: 'Silakan minta tautan baru melalui halaman lupa kata sandi.',
     requestNewLink: 'Minta Tautan Baru',
     loginNow: 'Login Sekarang',
+    activateTitle: 'Aktivasi Akun',
+    activateSubtitle: 'Buat kata sandi untuk mengaktifkan akun Shifd Anda.',
+    activateBtn: 'Aktifkan Akun',
+    activateSaving: 'Mengaktifkan...',
+    activateSuccessTitle: 'Akun Diaktifkan!',
+    activateSuccessMsg: 'Kata sandi Anda berhasil dibuat. Silakan login untuk mulai menggunakan Shifd.',
+    activateInvalidTokenMsg: 'Tautan aktivasi tidak valid atau telah kedaluwarsa. Silakan hubungi administrator Anda untuk mendapatkan tautan baru.',
   },
 
   dashboard: {
