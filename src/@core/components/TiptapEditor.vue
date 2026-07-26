@@ -151,7 +151,15 @@ watch(() => props.modelValue, () => {
   min-block-size: 15vh;
   outline: none;
 
+  /* Match A4PaperView.vue's printed .body p { margin-bottom: 1rem } so what is
+     shown here while editing looks like what the saved letter will look like
+     (paragraph breaks were previously invisible in this editor even though the
+     underlying <p> tags were already separate and printed correctly). */
   p {
+    margin-block-end: 1rem;
+  }
+
+  p:last-child {
     margin-block-end: 0;
   }
 
