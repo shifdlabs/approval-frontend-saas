@@ -561,6 +561,8 @@ const id = {
     partialVariantsNotice: 'Hanya %COUNT% dari 3 gaya berhasil dibuat kali ini.',
     overwriteWarning: 'Isi surat yang sudah ada akan diganti oleh draft yang dipilih.',
     reviewNotice: 'Draft dibuat oleh AI. Periksa kembali isi, tanggal, dan nama sebelum surat dikirim.',
+    preview: 'Preview',
+    closePreview: 'Tutup',
     regenerate: 'Buat Ulang',
     apply: 'Terapkan Draft Ini',
     errorQuota: 'Kuota pembuatan draft Anda sudah habis. Silakan coba lagi nanti.',

@@ -48,6 +48,13 @@ const errorMessage = ref('')
 const variants = ref<DraftVariant[]>([])
 const selectedStyle = ref<string | null>(null)
 
+// Full-text preview, one style at a time — mirrors the letter-template
+// preview dialog elsewhere on this page (openTemplatePreview in create.vue),
+// so reading a whole draft before deciding follows the same pattern the user
+// already knows from that feature.
+const isPreviewOpen = ref(false)
+const previewingVariant = ref<DraftVariant | null>(null)
+
 watch(
   () => props.isDialogVisible,
   (isVisible) => {
@@ -167,12 +174,26 @@ const backToForm = () => {
   errorMessage.value = ''
 }
 
-const confirmApply = () => {
-  if (!selectedVariant.value)
-    return
+const openPreview = (variant: DraftVariant) => {
+  previewingVariant.value = variant
+  isPreviewOpen.value = true
+}
 
-  emit('draftGenerated', selectedVariant.value.draft)
+// Shared by both apply paths (the card list's "Terapkan Draft Ini" and the
+// preview dialog's own apply button) so there is exactly one place that emits.
+const applyVariant = (variant: DraftVariant) => {
+  emit('draftGenerated', variant.draft)
   emit('update:isDialogVisible', false)
+}
+
+const confirmApply = () => {
+  if (selectedVariant.value)
+    applyVariant(selectedVariant.value)
+}
+
+const applyFromPreview = () => {
+  if (previewingVariant.value)
+    applyVariant(previewingVariant.value)
 }
 
 const onFormReset = () => {
@@ -329,6 +350,16 @@ const dialogModelValueUpdate = (val: boolean) => {
               <div class="ai-variant-preview">
                 {{ variant.draft }}
               </div>
+              <VBtn
+                size="x-small"
+                variant="text"
+                color="info"
+                class="mt-2 px-0"
+                prepend-icon="tabler-eye"
+                @click.stop="openPreview(variant)"
+              >
+                {{ t('aiDraft.preview') }}
+              </VBtn>
             </VCardText>
           </VCard>
         </div>
@@ -353,13 +384,35 @@ const dialogModelValueUpdate = (val: boolean) => {
       </div>
     </VCard>
   </VDialog>
+
+  <!-- Full draft preview, one style at a time, opened via the "Preview" button
+       on each card. Same shell as the letter-template preview dialog elsewhere
+       on this page (VDialog scrollable + VCardTitle/VCardText/VCardActions). -->
+  <VDialog v-model="isPreviewOpen" max-width="700" scrollable>
+    <VCard v-if="previewingVariant">
+      <VCardTitle class="pa-5 pb-3 d-flex align-center justify-space-between">
+        <span>{{ styleMeta[previewingVariant.style]?.label ?? previewingVariant.style }}</span>
+        <VBtn icon="tabler-x" variant="text" size="small" @click="isPreviewOpen = false" />
+      </VCardTitle>
+      <VDivider />
+      <VCardText class="pa-5 ai-variant-preview-full">
+        {{ previewingVariant.draft }}
+      </VCardText>
+      <VDivider />
+      <VCardActions class="pa-4 gap-3">
+        <VBtn variant="outlined" @click="isPreviewOpen = false">
+          {{ t('aiDraft.closePreview') }}
+        </VBtn>
+        <VSpacer />
+        <VBtn color="primary" prepend-icon="tabler-check" @click="applyFromPreview">
+          {{ t('aiDraft.apply') }}
+        </VBtn>
+      </VCardActions>
+    </VCard>
+  </VDialog>
 </template>
 
 <style scoped>
-/* Single scroll region for the whole card list. A second overflow:auto box
-   inside each card (the old .ai-variant-preview) fought this one for wheel
-   events: the inner box was too short to show a full letter and scrolling
-   over it just scrolled the outer list instead, reading as "can't scroll". */
 .ai-variant-list {
   display: flex;
   flex-direction: column;
@@ -372,15 +425,35 @@ const dialogModelValueUpdate = (val: boolean) => {
 .ai-variant-card {
   cursor: pointer;
   transition: border-color 0.15s ease;
+  /* Vuetify's VCard sets overflow:hidden for its rounded corners, which lets a
+     flex column child shrink below its content height (min-height:auto no
+     longer applies once overflow != visible). Without flex-shrink:0 here, the
+     list above would silently compress each card to fit max-height and clip
+     text mid-sentence instead of scrolling to show it. */
+  flex-shrink: 0;
 }
 
+/* A short, clamped snippet only: the full draft is one click away via the
+   "Preview" button (see .ai-variant-preview-full below), so this stays
+   compact for comparing all three styles at a glance instead of growing each
+   card to full-letter height. */
 .ai-variant-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   white-space: pre-wrap;
   font-size: 13px;
   line-height: 1.5;
   color: rgb(var(--v-theme-on-surface), 0.8);
   padding-block-start: 8px;
   border-block-start: 1px dashed rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+/* Full, untruncated draft inside the preview dialog. */
+.ai-variant-preview-full {
+  white-space: pre-wrap;
+  line-height: 1.6;
 }
 
 /* Footer buttons must never lose text to their flex box shrinking: the

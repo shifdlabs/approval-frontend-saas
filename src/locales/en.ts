@@ -561,6 +561,8 @@ const en = {
     partialVariantsNotice: 'Only %COUNT% of 3 styles were generated successfully this time.',
     overwriteWarning: 'The existing letter body will be replaced by the draft you choose.',
     reviewNotice: 'This draft is AI-generated. Review the content, dates and names before sending.',
+    preview: 'Preview',
+    closePreview: 'Close',
     regenerate: 'Regenerate',
     apply: 'Apply This Draft',
     errorQuota: 'You have reached your draft generation quota. Please try again later.',
