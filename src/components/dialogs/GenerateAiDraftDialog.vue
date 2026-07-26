@@ -295,7 +295,7 @@ const dialogModelValueUpdate = (val: boolean) => {
       <!-- Step 2: pick a style -->
       <div v-else class="bmd-body">
         <VAlert v-if="variants.length < 3" color="info" variant="tonal" class="mb-3" density="compact">
-          {{ t('aiDraft.partialVariantsNotice').replace('{count}', String(variants.length)) }}
+          {{ t('aiDraft.partialVariantsNotice').replace('%COUNT%', String(variants.length)) }}
         </VAlert>
         <VAlert v-if="props.hasExistingBody" color="warning" variant="tonal" class="mb-3" density="compact">
           {{ t('aiDraft.overwriteWarning') }}
@@ -356,12 +356,17 @@ const dialogModelValueUpdate = (val: boolean) => {
 </template>
 
 <style scoped>
+/* Single scroll region for the whole card list. A second overflow:auto box
+   inside each card (the old .ai-variant-preview) fought this one for wheel
+   events: the inner box was too short to show a full letter and scrolling
+   over it just scrolled the outer list instead, reading as "can't scroll". */
 .ai-variant-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 55vh;
+  max-height: 60vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .ai-variant-card {
@@ -370,13 +375,20 @@ const dialogModelValueUpdate = (val: boolean) => {
 }
 
 .ai-variant-preview {
-  block-size: 140px;
-  overflow-y: auto;
   white-space: pre-wrap;
   font-size: 13px;
   line-height: 1.5;
   color: rgb(var(--v-theme-on-surface), 0.8);
   padding-block-start: 8px;
   border-block-start: 1px dashed rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+/* Footer buttons must never lose text to their flex box shrinking: the
+   generate/apply label is long enough (esp. the loading state) that the
+   default flex-shrink:1 could squeeze it against the dialog's overflow:hidden
+   edge and visually clip it instead of wrapping (white-space:nowrap in the
+   shared .bmd-btn rule already forbids wrapping). */
+.bmd-foot .bmd-btn {
+  flex-shrink: 0;
 }
 </style>
