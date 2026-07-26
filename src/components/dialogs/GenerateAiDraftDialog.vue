@@ -58,6 +58,13 @@ const previewingVariant = ref<DraftVariant | null>(null)
 watch(
   () => props.isDialogVisible,
   (isVisible) => {
+    // The preview dialog has its own independent visibility state (isPreviewOpen
+    // below), so it does not automatically follow the main dialog. Close it
+    // whenever the main dialog's visibility changes in either direction, so a
+    // preview can never linger open after the main dialog closes or reopens.
+    isPreviewOpen.value = false
+    previewingVariant.value = null
+
     if (isVisible) {
       step.value = 'form'
       formData.value = { ...initialFormData }
@@ -181,7 +188,11 @@ const openPreview = (variant: DraftVariant) => {
 
 // Shared by both apply paths (the card list's "Terapkan Draft Ini" and the
 // preview dialog's own apply button) so there is exactly one place that emits.
+// isPreviewOpen is closed here directly (not left to the props.isDialogVisible
+// watcher) so it disappears in the same tick as the click, regardless of
+// which of the two apply buttons triggered it.
 const applyVariant = (variant: DraftVariant) => {
+  isPreviewOpen.value = false
   emit('draftGenerated', variant.draft)
   emit('update:isDialogVisible', false)
 }
