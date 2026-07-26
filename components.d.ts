@@ -59,6 +59,7 @@ declare module 'vue' {
     ErrorHeader: typeof import('./src/components/ErrorHeader.vue')['default']
     FileRowView: typeof import('./src/components/attachment/FileRowView.vue')['default']
     FileUploadIcon: typeof import('./src/components/buttons/FileUploadIcon.vue')['default']
+    GenerateAiDraftDialog: typeof import('./src/components/dialogs/GenerateAiDraftDialog.vue')['default']
     I18n: typeof import('./src/@core/components/I18n.vue')['default']
     ImportUsersDialog: typeof import('./src/components/dialogs/ImportUsersDialog.vue')['default']
     MoreBtn: typeof import('./src/@core/components/MoreBtn.vue')['default']
