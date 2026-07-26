@@ -5,14 +5,15 @@ import { VForm } from 'vuetify/components'
 interface Props {
   isDialogVisible: boolean
   // True when the body editor already has content, so the user is warned that
-  // generating will replace what they wrote.
+  // applying a draft will replace what they wrote.
   hasExistingBody?: boolean
 }
 
 interface Emit {
   (e: 'update:isDialogVisible', val: boolean): void
-  // Emitted with the generated letter body as plain text; the page decides how
-  // to place it into the editor.
+  // Emitted with the chosen letter body as plain text, only once the user has
+  // picked a style and confirmed — the page decides how to place it into the
+  // editor (see applyAiDraft in document/create.vue) and plays the apply effect.
   (e: 'draftGenerated', draft: string): void
 }
 
@@ -21,12 +22,22 @@ const props = defineProps<Props>()
 
 const { t } = useI18n()
 
+interface DraftVariant {
+  style: string
+  draft: string
+  tokensUsed: number
+}
+
+// Two-step flow: fill the brief, then compare styles before committing one to
+// the editor. Splitting these avoids overwriting the user's letter body with
+// something they have not actually reviewed yet.
+const step = ref<'form' | 'variants'>('form')
+
 const initialFormData = {
   letterType: '',
   purpose: '',
   keyPoints: '',
   recipient: '',
-  tone: 'formal',
 }
 
 const formData = ref({ ...initialFormData })
@@ -34,22 +45,34 @@ const refVForm = ref<VForm>()
 const isAllInputtedValid = ref(true)
 const isGenerating = ref(false)
 const errorMessage = ref('')
+const variants = ref<DraftVariant[]>([])
+const selectedStyle = ref<string | null>(null)
 
 watch(
   () => props.isDialogVisible,
   (isVisible) => {
     if (isVisible) {
+      step.value = 'form'
       formData.value = { ...initialFormData }
       isAllInputtedValid.value = true
       errorMessage.value = ''
+      variants.value = []
+      selectedStyle.value = null
     }
   },
 )
 
-const toneOptions = computed(() => [
-  { title: t('aiDraft.toneFormal'), value: 'formal' },
-  { title: t('aiDraft.toneSemiFormal'), value: 'semi-formal' },
-])
+// Fixed, stable order matching the backend's draftStyles — the backend only
+// returns a `style` key per variant, this dialog owns the label/description.
+const styleMeta: Record<string, { label: string, description: string }> = {
+  formal: { label: t('aiDraft.styleFormalLabel'), description: t('aiDraft.styleFormalDesc') },
+  ringkas: { label: t('aiDraft.styleRingkasLabel'), description: t('aiDraft.styleRingkasDesc') },
+  'semi-formal': { label: t('aiDraft.styleSemiFormalLabel'), description: t('aiDraft.styleSemiFormalDesc') },
+}
+
+const selectedVariant = computed(() =>
+  variants.value.find(v => v.style === selectedStyle.value) ?? null,
+)
 
 // Key points are entered one per line — far simpler than an add/remove row
 // editor, and it maps straight onto the array the API expects.
@@ -88,13 +111,14 @@ const generateDraft = async () => {
         purpose: formData.value.purpose,
         key_points: keyPointsList.value,
         recipient: formData.value.recipient || undefined,
-        tone: formData.value.tone,
       }),
-    }).json<{ success: boolean, data: { draft: string, tokens_used: number } }>()
+    }).json<{ success: boolean, data: { variants: { style: string, draft: string, tokens_used: number }[] } }>()
 
-    if (data.value?.success && data.value.data?.draft) {
-      emit('draftGenerated', data.value.data.draft)
-      emit('update:isDialogVisible', false)
+    const received = data.value?.data?.variants ?? []
+    if (data.value?.success && received.length > 0) {
+      variants.value = received.map(v => ({ style: v.style, draft: v.draft, tokensUsed: v.tokens_used }))
+      selectedStyle.value = null
+      step.value = 'variants'
       return
     }
 
@@ -136,13 +160,28 @@ const onFormSubmit = async () => {
     })
 }
 
+// Back to the form with the brief kept intact, so the user can tweak and
+// regenerate instead of retyping everything.
+const backToForm = () => {
+  step.value = 'form'
+  errorMessage.value = ''
+}
+
+const confirmApply = () => {
+  if (!selectedVariant.value)
+    return
+
+  emit('draftGenerated', selectedVariant.value.draft)
+  emit('update:isDialogVisible', false)
+}
+
 const onFormReset = () => {
   emit('update:isDialogVisible', false)
 }
 
 const dialogModelValueUpdate = (val: boolean) => {
   // Ignore outside clicks while a generation is in flight — closing mid-request
-  // would discard a draft the org has already paid for.
+  // would discard drafts the org has already paid for.
   if (isGenerating.value)
     return
 
@@ -152,7 +191,7 @@ const dialogModelValueUpdate = (val: boolean) => {
 
 <template>
   <VDialog
-    :width="$vuetify.display.smAndDown ? 'auto' : 620"
+    :width="$vuetify.display.smAndDown ? 'auto' : (step === 'variants' ? 760 : 620)"
     :model-value="props.isDialogVisible"
     :persistent="isGenerating"
     @update:model-value="dialogModelValueUpdate"
@@ -163,8 +202,8 @@ const dialogModelValueUpdate = (val: boolean) => {
           <VIcon icon="tabler-sparkles" size="22" />
         </div>
         <div class="bmd-titles">
-          <h2>{{ t('aiDraft.title') }}</h2>
-          <p>{{ t('aiDraft.subtitle') }}</p>
+          <h2>{{ step === 'form' ? t('aiDraft.title') : t('aiDraft.variantsTitle') }}</h2>
+          <p>{{ step === 'form' ? t('aiDraft.subtitle') : t('aiDraft.variantsSubtitle') }}</p>
         </div>
         <button
           class="bmd-close"
@@ -176,7 +215,8 @@ const dialogModelValueUpdate = (val: boolean) => {
         </button>
       </div>
 
-      <VForm ref="refVForm" @submit.prevent="onFormSubmit">
+      <!-- Step 1: brief form -->
+      <VForm v-if="step === 'form'" ref="refVForm" @submit.prevent="onFormSubmit">
         <div class="bmd-body">
           <VAlert v-if="errorMessage" color="error" class="mb-3">
             {{ errorMessage }}
@@ -184,27 +224,15 @@ const dialogModelValueUpdate = (val: boolean) => {
           <VAlert v-if="!isAllInputtedValid" color="error" class="mb-3">
             {{ t('common.errorFormInput') }}
           </VAlert>
-          <VAlert v-if="props.hasExistingBody" color="warning" variant="tonal" class="mb-3">
-            {{ t('aiDraft.overwriteWarning') }}
-          </VAlert>
 
           <VRow>
-            <VCol cols="12" md="6">
+            <VCol cols="12">
               <AppTextField
                 v-model="formData.letterType"
                 :label="t('aiDraft.letterType')"
                 :placeholder="t('aiDraft.letterTypePh')"
                 :disabled="isGenerating"
                 :rules="[requiredValidator, maxLengthValidator(100)]"
-              />
-            </VCol>
-            <VCol cols="12" md="6">
-              <AppSelect
-                v-model="formData.tone"
-                :label="t('aiDraft.tone')"
-                :items="toneOptions"
-                :disabled="isGenerating"
-                :rules="[requiredValidator]"
               />
             </VCol>
 
@@ -244,7 +272,7 @@ const dialogModelValueUpdate = (val: boolean) => {
           </VRow>
 
           <div class="text-caption text-medium-emphasis mt-3">
-            {{ t('aiDraft.reviewNotice') }}
+            {{ t('aiDraft.stylesNotice') }}
           </div>
         </div>
 
@@ -263,6 +291,92 @@ const dialogModelValueUpdate = (val: boolean) => {
           </button>
         </div>
       </VForm>
+
+      <!-- Step 2: pick a style -->
+      <div v-else class="bmd-body">
+        <VAlert v-if="variants.length < 3" color="info" variant="tonal" class="mb-3" density="compact">
+          {{ t('aiDraft.partialVariantsNotice').replace('{count}', String(variants.length)) }}
+        </VAlert>
+        <VAlert v-if="props.hasExistingBody" color="warning" variant="tonal" class="mb-3" density="compact">
+          {{ t('aiDraft.overwriteWarning') }}
+        </VAlert>
+
+        <div class="ai-variant-list">
+          <VCard
+            v-for="variant in variants"
+            :key="variant.style"
+            :variant="selectedStyle === variant.style ? 'tonal' : 'outlined'"
+            :color="selectedStyle === variant.style ? 'primary' : undefined"
+            class="ai-variant-card"
+            @click="selectedStyle = variant.style"
+          >
+            <VCardText>
+              <div class="d-flex align-center justify-space-between gap-2 mb-1">
+                <div>
+                  <div class="text-subtitle-2 font-weight-bold">
+                    {{ styleMeta[variant.style]?.label ?? variant.style }}
+                  </div>
+                  <div class="text-caption text-medium-emphasis">
+                    {{ styleMeta[variant.style]?.description }}
+                  </div>
+                </div>
+                <VIcon
+                  :icon="selectedStyle === variant.style ? 'tabler-circle-check-filled' : 'tabler-circle'"
+                  :color="selectedStyle === variant.style ? 'primary' : 'secondary'"
+                  size="22"
+                />
+              </div>
+              <div class="ai-variant-preview">
+                {{ variant.draft }}
+              </div>
+            </VCardText>
+          </VCard>
+        </div>
+
+        <div class="text-caption text-medium-emphasis mt-3">
+          {{ t('aiDraft.reviewNotice') }}
+        </div>
+
+        <div class="bmd-foot">
+          <button class="bmd-btn bmd-btn-ghost" type="button" @click="backToForm">
+            {{ t('aiDraft.regenerate') }}
+          </button>
+          <button
+            class="bmd-btn bmd-btn-primary"
+            type="button"
+            :disabled="!selectedVariant"
+            @click="confirmApply"
+          >
+            {{ t('aiDraft.apply') }}
+          </button>
+        </div>
+      </div>
     </VCard>
   </VDialog>
 </template>
+
+<style scoped>
+.ai-variant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.ai-variant-card {
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.ai-variant-preview {
+  block-size: 140px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgb(var(--v-theme-on-surface), 0.8);
+  padding-block-start: 8px;
+  border-block-start: 1px dashed rgba(var(--v-border-color), var(--v-border-opacity));
+}
+</style>

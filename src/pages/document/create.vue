@@ -117,10 +117,27 @@ const plainTextToHtml = (text: string) =>
     .map(paragraph => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
     .join('')
 
+// "Magic" apply effect: a brief shimmer/sparkle overlay plays over the editor
+// while the chosen draft is set, so committing an AI draft reads as a distinct
+// moment rather than the body silently changing under the user.
+const isApplyingAiDraft = ref(false)
+// ponytail: timings are picked by eye, not measured against user testing —
+// tune magicRevealDelayMs / magicOverlayDurationMs directly if it feels off.
+const magicRevealDelayMs = 180
+const magicOverlayDurationMs = 1100
+
 const applyAiDraft = (draft: string) => {
-  document.value.body = plainTextToHtml(draft)
-  // The draft is not a saved template, so clear any template highlight.
-  selectedTemplateId.value = null
+  isApplyingAiDraft.value = true
+  // The overlay starts sweeping first so the content swap happens mid-effect,
+  // not at the very start where it would look like a plain instant replace.
+  window.setTimeout(() => {
+    document.value.body = plainTextToHtml(draft)
+    // The draft is not a saved template, so clear any template highlight.
+    selectedTemplateId.value = null
+  }, magicRevealDelayMs)
+  window.setTimeout(() => {
+    isApplyingAiDraft.value = false
+  }, magicOverlayDurationMs)
 }
 
 const isLoaderVisible = ref(false)
@@ -737,11 +754,20 @@ const onFileRemoved = (index: number) => {
                 cols="12"
                 >
                 <VLabel class="mb-3">{{ $t('document.create.writeBody') }}</VLabel>
-                <TiptapEditor
-                    v-model="document.body"
-                    class="border rounded basic-editor"
-                    :rules="[requiredValidator]"
-                />
+                <div class="ai-magic-target" :class="{ 'is-applying-magic': isApplyingAiDraft }">
+                  <TiptapEditor
+                      v-model="document.body"
+                      class="border rounded basic-editor"
+                      :rules="[requiredValidator]"
+                  />
+                  <div v-if="isApplyingAiDraft" class="ai-magic-overlay">
+                    <span class="ai-magic-sweep" />
+                    <VIcon icon="tabler-sparkles" class="ai-magic-spark ai-magic-spark-1" size="18" />
+                    <VIcon icon="tabler-sparkles" class="ai-magic-spark ai-magic-spark-2" size="14" />
+                    <VIcon icon="tabler-sparkles" class="ai-magic-spark ai-magic-spark-3" size="20" />
+                    <VIcon icon="tabler-sparkles" class="ai-magic-spark ai-magic-spark-4" size="12" />
+                  </div>
+                </div>
                 </VCol>
 
                 <VCol
@@ -1529,5 +1555,94 @@ const onFileRemoved = (index: number) => {
   display: inline-block;
   padding-top: 4px;
   min-width: 180px;
+}
+
+// AI draft "apply" effect — pure CSS (no animation library), plays once when
+// isApplyingAiDraft flips true in create.vue's applyAiDraft(). No new
+// dependency: keyframes + a short-lived overlay element already cover it.
+.ai-magic-target {
+  position: relative;
+}
+
+.ai-magic-target.is-applying-magic {
+  border-radius: 6px;
+  animation: ai-magic-glow 1.1s ease-out;
+}
+
+@keyframes ai-magic-glow {
+  0%   { box-shadow: 0 0 0 0 rgba(var(--v-theme-primary), 0.5); }
+  30%  { box-shadow: 0 0 0 6px rgba(var(--v-theme-primary), 0.16); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--v-theme-primary), 0); }
+}
+
+.ai-magic-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.ai-magic-sweep {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -50%;
+  inline-size: 45%;
+  opacity: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(var(--v-theme-primary), 0.22) 45%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(var(--v-theme-primary), 0.22) 55%,
+    transparent 100%
+  );
+  animation: ai-magic-sweep-move 1.1s ease-in-out;
+}
+
+@keyframes ai-magic-sweep-move {
+  0%   { inset-inline-start: -50%; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { inset-inline-start: 105%; opacity: 0; }
+}
+
+.ai-magic-spark {
+  position: absolute;
+  color: rgb(var(--v-theme-primary));
+  opacity: 0;
+  animation: ai-magic-spark-pop 1.1s ease-out;
+}
+
+.ai-magic-spark-1 { inset-block-start: 12%; inset-inline-start: 20%; animation-delay: 0.05s; }
+.ai-magic-spark-2 { inset-block-start: 65%; inset-inline-start: 38%; animation-delay: 0.25s; }
+.ai-magic-spark-3 { inset-block-start: 30%; inset-inline-start: 70%; animation-delay: 0.15s; }
+.ai-magic-spark-4 { inset-block-start: 75%; inset-inline-start: 82%; animation-delay: 0.4s; }
+
+@keyframes ai-magic-spark-pop {
+  0%   { opacity: 0; transform: scale(0.4) rotate(-15deg); }
+  35%  { opacity: 1; transform: scale(1.15) rotate(0deg); }
+  70%  { opacity: 1; transform: scale(1) rotate(10deg); }
+  100% { opacity: 0; transform: scale(0.7) rotate(15deg); }
+}
+
+// New paragraphs fade/rise in with a stagger, so the replaced body feels
+// "materialized" instead of just popping in. Matches Tiptap's own <p> tags
+// (see TiptapEditor.vue) — this block is intentionally global, same as the
+// .ProseMirror rules TiptapEditor.vue itself defines.
+.ai-magic-target.is-applying-magic .ProseMirror > p {
+  animation: ai-magic-paragraph-in 0.5s ease-out both;
+}
+
+.ai-magic-target.is-applying-magic .ProseMirror > p:nth-child(1) { animation-delay: 0.18s; }
+.ai-magic-target.is-applying-magic .ProseMirror > p:nth-child(2) { animation-delay: 0.26s; }
+.ai-magic-target.is-applying-magic .ProseMirror > p:nth-child(3) { animation-delay: 0.34s; }
+.ai-magic-target.is-applying-magic .ProseMirror > p:nth-child(4) { animation-delay: 0.42s; }
+.ai-magic-target.is-applying-magic .ProseMirror > p:nth-child(n+5) { animation-delay: 0.5s; }
+
+@keyframes ai-magic-paragraph-in {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 </style>
