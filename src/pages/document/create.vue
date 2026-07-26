@@ -95,6 +95,34 @@ const applyTemplate = (tpl: LetterTemplate) => {
   isTemplatePreviewOpen.value = false
 }
 
+// AI draft feature — sits beside the template picker because both do the same
+// thing: fill the letter body for the user.
+const isAiDraftDialogVisible = ref(false)
+
+const hasExistingBody = computed(() => {
+  const body = document.value.body || ''
+  // Tiptap keeps an empty document as "<p></p>", which is not real content.
+  return body.replace(/<[^>]*>/g, '').trim().length > 0
+})
+
+const escapeHtml = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+// SAIS returns plain text; the editor holds HTML. Escape first — the text comes
+// from a language model and must never be trusted as markup.
+const plainTextToHtml = (text: string) =>
+  text
+    .trim()
+    .split(/\n{2,}/)
+    .map(paragraph => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
+    .join('')
+
+const applyAiDraft = (draft: string) => {
+  document.value.body = plainTextToHtml(draft)
+  // The draft is not a saved template, so clear any template highlight.
+  selectedTemplateId.value = null
+}
+
 const isLoaderVisible = ref(false)
 const isUploading = ref(false)
 const uploadingFiles = ref<File[]>([])
@@ -634,6 +662,25 @@ const onFileRemoved = (index: number) => {
 
         <VWindowItem :value="2">
             <VRow>
+                <!-- AI draft — same job as the template picker: fill the body for the user -->
+                <VCol cols="12">
+                  <div class="d-flex flex-wrap align-center justify-space-between gap-3">
+                    <div>
+                      <VLabel class="mb-1 d-block">{{ $t('aiDraft.sectionTitle') }}</VLabel>
+                      <div class="text-body-2 text-secondary">{{ $t('aiDraft.sectionSubtitle') }}</div>
+                    </div>
+                    <VBtn
+                      color="primary"
+                      variant="tonal"
+                      prepend-icon="tabler-sparkles"
+                      @click="isAiDraftDialogVisible = true"
+                    >
+                      {{ $t('aiDraft.openButton') }}
+                    </VBtn>
+                  </div>
+                  <VDivider class="mt-4 mb-2" />
+                </VCol>
+
                 <!-- Template Selector — only shown when templates exist -->
                 <VCol v-if="templates.length > 0" cols="12">
                   <div class="mb-2">
@@ -1181,6 +1228,13 @@ const onFileRemoved = (index: number) => {
       </div>
     </VCard>
   </VDialog>
+
+  <!-- AI draft generator — fills the body editor -->
+  <GenerateAiDraftDialog
+    v-model:is-dialog-visible="isAiDraftDialogVisible"
+    :has-existing-body="hasExistingBody"
+    @draft-generated="applyAiDraft"
+  />
 </template>
 
 <style lang="scss">
