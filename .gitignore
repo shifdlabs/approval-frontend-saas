@@ -20,6 +20,7 @@ dist-ssr
 
 # Claude Code & internal docs (local only)
 CLAUDE.md
+AGENT.md
 BACKEND_PROMPT.md
 HANDOFF_FE_BUGFIX.md
 *.xlsx

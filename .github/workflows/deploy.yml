@@ -1,0 +1,103 @@
+name: Deploy Approval Frontend to EC2 (Static)
+run-name: Deploy branch '${{ inputs.branch }}' to production 🚀
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch yang mau di-naikkan ke production'
+        required: true
+        default: main
+
+# Token hanya perlu baca repo; cegah penyalahgunaan GITHUB_TOKEN jika ada step yang terkompromi
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create production .env
+        run: |
+          echo "VITE_API_BASE_URL=/api" >> .env
+          echo "VITE_SIS_BASE_URL=https://auth.shifdapproval.cloud" >> .env
+          echo "VITE_ACCESS_KEY_ID_S3=" >> .env
+          echo "VITE_SECRET_ACCESS_KEY_S3=" >> .env
+
+      - name: Build project
+        run: pnpm build
+
+      - name: Verify dist
+        run: |
+          echo "=== Hash file terbaru ==="
+          ls dist/assets/
+
+      - name: Clean temp folder on server
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            rm -rf /home/${{ secrets.EC2_USER }}/deploy_temp
+            mkdir -p /home/${{ secrets.EC2_USER }}/deploy_temp
+
+      - name: Upload build to temp folder
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "dist/*" # pakai wildcard, bukan "dist/"
+          target: "/home/${{ secrets.EC2_USER }}/deploy_temp"
+          strip_components: 1 # strip prefix "dist" dari "dist/index.html" → "index.html"
+
+      - name: Replace web root safely
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "=== Isi deploy_temp ==="
+            ls -la /home/${{ secrets.EC2_USER }}/deploy_temp/
+
+            # Pastikan deploy_temp tidak kosong sebelum hapus web root
+            if [ -z "$(ls -A /home/${{ secrets.EC2_USER }}/deploy_temp/)" ]; then
+              echo "ERROR: deploy_temp kosong, deploy dibatalkan"
+              exit 1
+            fi
+
+            sudo rm -rf /var/www/approval-frontend/*
+            sudo cp -r /home/${{ secrets.EC2_USER }}/deploy_temp/. /var/www/approval-frontend/
+            sudo chown -R ${{ secrets.EC2_USER }}:${{ secrets.EC2_USER }} /var/www/approval-frontend
+            sudo systemctl reload nginx
+
+            echo "=== Isi /var/www/approval-frontend ==="
+            ls -la /var/www/approval-frontend/
+
+            rm -rf /home/${{ secrets.EC2_USER }}/deploy_temp
+            echo "=== DEPLOY SELESAI ==="
