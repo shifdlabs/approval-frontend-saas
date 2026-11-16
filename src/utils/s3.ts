@@ -8,9 +8,19 @@
 // secret.
 import { $api } from '@/utils/api'
 
-const REGION = 'ap-southeast-3'
-const BUCKET = 'alpha-development-storage'
-export const S3BucketUrl = `https://${BUCKET}.s3.${REGION}.amazonaws.com/`
+// Public read base URL of the storage bucket, e.g. a Cloudflare R2 r2.dev URL.
+// Falls back to the original AWS bucket when VITE_S3_PUBLIC_URL is not set.
+const LEGACY_AWS_BUCKET_URL = 'https://alpha-development-storage.s3.ap-southeast-3.amazonaws.com/'
+const publicUrl = import.meta.env.VITE_S3_PUBLIC_URL || LEGACY_AWS_BUCKET_URL
+export const S3BucketUrl = publicUrl.endsWith('/') ? publicUrl : `${publicUrl}/`
+
+// s3KeyFromUrl returns the object key of a stored file URL, or undefined when
+// the URL does not point at our bucket. Old AWS URLs are still recognised.
+export function s3KeyFromUrl(url: string): string | undefined {
+  if (url.startsWith(S3BucketUrl))
+    return url.slice(S3BucketUrl.length).split('?')[0] || undefined
+  return url.split('.amazonaws.com/')[1]?.split('?')[0] || undefined
+}
 export const AttachmentFolderName = 'document-attachments/'
 export const SignatureFolderName = 'signatures/'
 
