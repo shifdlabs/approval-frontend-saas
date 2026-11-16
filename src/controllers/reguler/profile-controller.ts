@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { SignatureResponse, SignatureRequest, UpdateSignatureRequest } from '@/models/signature/signature'
 import { User } from '@/models/users/users'
 import { Position } from '@/models/positions/position'
-import { uploadS3File, deleteS3File, S3BucketUrl, SignatureFolderName } from '@/utils/s3'
+import { uploadS3File, deleteS3File, S3BucketUrl, SignatureFolderName, s3KeyFromUrl } from '@/utils/s3'
 import { useApi } from '@/composables/useApi'
 
 export function useProfileController() {
@@ -160,7 +160,7 @@ export function useProfileController() {
     try {
       if (userSignature.value.imageUrl) {
         try {
-          const oldS3Key = userSignature.value.imageUrl.split('.amazonaws.com/')[1]
+          const oldS3Key = s3KeyFromUrl(userSignature.value.imageUrl)
           if (oldS3Key) {
             await deleteS3File(oldS3Key)
           }
@@ -234,7 +234,7 @@ export function useProfileController() {
       if (res.success) {
         if (userSignature.value.imageUrl) {
           try {
-            const s3Key = userSignature.value.imageUrl.split('.amazonaws.com/')[1]
+            const s3Key = s3KeyFromUrl(userSignature.value.imageUrl)
             if (s3Key) {
               await deleteS3File(s3Key)
               console.log('Signature file deleted from S3')
